@@ -1,0 +1,149 @@
+"""
+Tool : generate_insights
+Génère un rapport actionnable à partir des clusters et feedbacks d'un projet.
+"""
+
+import os
+import json
+import re
+from datetime import datetime, timezone, timedelta
+
+import vertexai
+from vertexai.generative_models import GenerativeModel
+
+from db import get_mongo_client
+
+vertexai.init(
+    project=os.environ["GCP_PROJECT_ID"],
+    location=os.environ.get("GCP_REGION", "us-central1"),
+)
+
+_model = GenerativeModel("gemini-2.0-flash")
+
+
+async def generate_insights(project_id: str) -> dict:
+    """
+    Analyse les feedbacks et clusters pour générer un rapport actionnable.
+
+    Returns:
+        dict avec stats, top_issues, recommendations, generated_at
+    """
+    db = get_mongo_client()
+    now = datetime.now(timezone.utc)
+    week_ago = now - timedelta(days=7)
+
+    # ── Stats de base ────────────────────────────────────────────────────────
+    total       = db.feedbacks.count_documents({"project_id": project_id})
+    this_week   = db.feedbacks.count_documents({"project_id": project_id, "created_at": {"$gte": week_ago}})
+    cluster_count = db.clusters.count_documents({"project_id": project_id})
+
+    # Sentiment moyen
+    pipeline = [
+        {"$match": {"project_id": project_id}},
+        {"$group": {"_id": None, "avg": {"$avg": "$sentiment"}}},
+    ]
+    sent_result = list(db.feedbacks.aggregate(pipeline))
+    avg_sentiment = round(sent_result[0]["avg"], 3) if sent_result else 0.0
+
+    # ── Top issues (par catégorie + volume) ─────────────────────────────────
+    category_pipeline = [
+        {"$match": {"project_id": project_id}},
+        {"$group": {
+            "_id":           "$category",
+            "count":         {"$sum": 1},
+            "avg_sentiment": {"$avg": "$sentiment"},
+            "samples":       {"$push": "$text"},
+        }},
+        {"$sort": {"count": -1}},
+        {"$limit": 5},
+    ]
+    categories = list(db.feedbacks.aggregate(category_pipeline))
+
+    top_issues = []
+    for cat in categories:
+        samples = cat["samples"][:3]
+        priority = "high" if cat["avg_sentiment"] < -0.3 or cat["count"] > 10 else \
+                   "medium" if cat["count"] > 3 else "low"
+
+        top_issues.append({
+            "category":    cat["_id"],
+            "count":       cat["count"],
+            "priority":    priority,
+            "label":       _category_label(cat["_id"]),
+            "sample":      samples[0] if samples else "",
+            "avg_sentiment": round(cat["avg_sentiment"], 2),
+        })
+
+    # ── Recommandations Gemini ───────────────────────────────────────────────
+    clusters = list(
+        db.clusters.find({"project_id": project_id})
+        .sort("feedback_count", -1)
+        .limit(5)
+    )
+
+    clusters_summary = "\n".join(
+        f"- {c['label']} ({c['feedback_count']} feedbacks, sentiment: {c['avg_sentiment']:.2f})"
+        for c in clusters
+    )
+
+    rec_prompt = f"""
+Tu es un Product Manager expert. Voici les données de feedback d'un produit SaaS.
+
+Stats :
+- {total} feedbacks au total, {this_week} cette semaine
+- Sentiment moyen : {avg_sentiment}
+
+Clusters principaux :
+{clusters_summary}
+
+Top catégories :
+{chr(10).join(f"- {i['category']}: {i['count']} feedbacks" for i in top_issues)}
+
+Génère exactement 3 recommandations actionnables pour cette semaine.
+Réponds UNIQUEMENT en JSON valide (sans markdown) :
+[
+  {{"action": "...", "reason": "...", "impact": "élevé|moyen|faible"}},
+  ...
+]
+"""
+
+    rec_response = _model.generate_content(rec_prompt)
+    raw = rec_response.text.strip()
+    raw = re.sub(r"```(?:json)?", "", raw).strip().rstrip("`")
+
+    try:
+        recommendations = json.loads(raw)
+    except json.JSONDecodeError:
+        recommendations = [{"action": "Analyser les feedbacks manuellement", "reason": "Données insuffisantes", "impact": "faible"}]
+
+    # ── Sauvegarder l'insight ────────────────────────────────────────────────
+    insight_doc = {
+        "project_id": project_id,
+        "type":       "weekly",
+        "stats": {
+            "total":         total,
+            "this_week":     this_week,
+            "avg_sentiment": avg_sentiment,
+            "clusters":      cluster_count,
+        },
+        "top_issues":      top_issues,
+        "recommendations": recommendations,
+        "generated_at":    now,
+    }
+
+    db.insights.insert_one(insight_doc)
+    insight_doc["_id"] = str(insight_doc["_id"])
+    insight_doc["generated_at"] = now.isoformat()
+
+    return insight_doc
+
+
+def _category_label(category: str) -> str:
+    labels = {
+        "bug":             "Bugs signalés",
+        "feature_request": "Fonctionnalités demandées",
+        "ux":              "Problèmes d'expérience utilisateur",
+        "pricing":         "Retours sur les prix",
+        "other":           "Autres retours",
+    }
+    return labels.get(category, category)
