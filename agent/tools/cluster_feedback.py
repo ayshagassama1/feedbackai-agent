@@ -4,10 +4,12 @@ Utilise MongoDB Atlas Vector Search pour regrouper les feedbacks par similarité
 """
 
 import os
+import json
 import numpy as np
 from datetime import datetime, timezone
 
 from google import genai
+from google.genai import types
 
 from db import get_mongo_client
 from config import MODEL_NAME
@@ -16,6 +18,12 @@ _client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
 
 SIMILARITY_THRESHOLD = 0.82   # seuil de similarité cosine pour regrouper
 MIN_CLUSTER_SIZE     = 2      # nb minimum de feedbacks pour former un cluster
+
+LABEL_SCHEMA = {
+    "type": "object",
+    "properties": {"label": {"type": "string"}},
+    "required": ["label"],
+}
 
 
 def _cosine_similarity(a: list, b: list) -> float:
@@ -83,13 +91,20 @@ async def cluster_feedback(project_id: str) -> dict:
 
         label_prompt = f"""
 Ces feedbacks parlent tous du même sujet. Génère un label court (3-6 mots max) en français
-qui résume le thème commun. Réponds UNIQUEMENT avec le label, sans ponctuation finale.
+qui résume le thème commun, sans ponctuation finale.
 
 Feedbacks :
 {chr(10).join(f'- {t}' for t in sample_texts)}
 """
-        label_response = _client.models.generate_content(model=MODEL_NAME, contents=label_prompt)
-        label = label_response.text.strip()[:60]
+        label_response = _client.models.generate_content(
+            model=MODEL_NAME,
+            contents=label_prompt,
+            config=types.GenerateContentConfig(
+                response_mime_type="application/json",
+                response_schema=LABEL_SCHEMA,
+            ),
+        )
+        label = json.loads(label_response.text)["label"][:60]
 
         member_ids = [str(m["_id"]) for m in cluster["members"]]
 

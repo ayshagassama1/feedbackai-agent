@@ -5,15 +5,28 @@ Génère un rapport actionnable à partir des clusters et feedbacks d'un projet.
 
 import os
 import json
-import re
 from datetime import datetime, timezone, timedelta
 
 from google import genai
+from google.genai import types
 
 from db import get_mongo_client
 from config import MODEL_NAME
 
 _client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
+
+RECOMMENDATIONS_SCHEMA = {
+    "type": "array",
+    "items": {
+        "type": "object",
+        "properties": {
+            "action": {"type": "string"},
+            "reason": {"type": "string"},
+            "impact": {"type": "string", "enum": ["élevé", "moyen", "faible"]},
+        },
+        "required": ["action", "reason", "impact"],
+    },
+}
 
 
 async def generate_insights(project_id: str) -> dict:
@@ -95,21 +108,17 @@ Top catégories :
 {chr(10).join(f"- {i['category']}: {i['count']} feedbacks" for i in top_issues)}
 
 Génère exactement 3 recommandations actionnables pour cette semaine.
-Réponds UNIQUEMENT en JSON valide (sans markdown) :
-[
-  {{"action": "...", "reason": "...", "impact": "élevé|moyen|faible"}},
-  ...
-]
 """
 
-    rec_response = _client.models.generate_content(model=MODEL_NAME, contents=rec_prompt)
-    raw = rec_response.text.strip()
-    raw = re.sub(r"```(?:json)?", "", raw).strip().rstrip("`")
-
-    try:
-        recommendations = json.loads(raw)
-    except json.JSONDecodeError:
-        recommendations = [{"action": "Analyser les feedbacks manuellement", "reason": "Données insuffisantes", "impact": "faible"}]
+    rec_response = _client.models.generate_content(
+        model=MODEL_NAME,
+        contents=rec_prompt,
+        config=types.GenerateContentConfig(
+            response_mime_type="application/json",
+            response_schema=RECOMMENDATIONS_SCHEMA,
+        ),
+    )
+    recommendations = json.loads(rec_response.text)
 
     # ── Sauvegarder l'insight ────────────────────────────────────────────────
     insight_doc = {

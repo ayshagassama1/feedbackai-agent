@@ -19,6 +19,17 @@ _client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
 CATEGORIES = ["bug", "feature_request", "ux", "pricing", "other"]
 PRIORITIES  = ["high", "medium", "low"]
 
+CLASSIFICATION_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "category":  {"type": "string", "enum": CATEGORIES},
+        "sentiment": {"type": "number"},
+        "priority":  {"type": "string", "enum": PRIORITIES},
+        "summary":   {"type": "string"},
+    },
+    "required": ["category", "sentiment", "priority", "summary"],
+}
+
 
 def _clean(text: str) -> str:
     """Normalise le texte brut."""
@@ -66,34 +77,32 @@ async def ingest_feedback(
     # Simplifié — en production, utiliser langdetect ou l'API Translate
     language = "fr" if any(c in text for c in "àâäéèêëîïôùûüçæœ") else "en"
 
-    # ── 4. Classification Gemini ─────────────────────────────────────────────
+    # ── 4. Classification Gemini (sortie JSON structurée et contrainte) ──────
     classification_prompt = f"""
-Analyse ce feedback utilisateur et réponds UNIQUEMENT en JSON valide sans markdown.
-Format : {{"category": "...", "sentiment": 0.0, "priority": "...", "summary": "..."}}
+Analyse ce feedback utilisateur.
 
-Catégories possibles : {", ".join(CATEGORIES)}
-Priorités possibles  : {", ".join(PRIORITIES)}
-Sentiment            : float entre -1.0 (très négatif) et +1.0 (très positif)
-Summary              : résumé en 1 phrase max (même langue que le feedback)
+Sentiment : float entre -1.0 (très négatif) et +1.0 (très positif)
+Summary   : résumé en 1 phrase max (même langue que le feedback)
 
 Feedback : "{text}"
 """
 
-    response = _client.models.generate_content(model=MODEL_NAME, contents=classification_prompt)
-    raw = response.text.strip()
+    response = _client.models.generate_content(
+        model=MODEL_NAME,
+        contents=classification_prompt,
+        config=types.GenerateContentConfig(
+            response_mime_type="application/json",
+            response_schema=CLASSIFICATION_SCHEMA,
+        ),
+    )
 
     import json
-    # Nettoyer les backticks éventuels
-    raw = re.sub(r"```(?:json)?", "", raw).strip().rstrip("`")
-    try:
-        parsed = json.loads(raw)
-    except json.JSONDecodeError:
-        parsed = {"category": "other", "sentiment": 0.0, "priority": "low", "summary": text[:80]}
+    parsed = json.loads(response.text)
 
-    category  = parsed.get("category",  "other") if parsed.get("category")  in CATEGORIES else "other"
-    sentiment = float(parsed.get("sentiment", 0.0))
-    priority  = parsed.get("priority",  "low")   if parsed.get("priority")   in PRIORITIES else "low"
-    summary   = parsed.get("summary",   "")
+    category  = parsed["category"]
+    sentiment = float(parsed["sentiment"])
+    priority  = parsed["priority"]
+    summary   = parsed["summary"]
 
     # ── 5. Vectorisation (embeddings Gemini) ─────────────────────────────────
     embed_response = _client.models.embed_content(
