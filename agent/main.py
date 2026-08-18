@@ -3,29 +3,24 @@ Feedback Agent — orchestrateur principal
 Basé sur Google Cloud Agent Builder (Gemini Enterprise Agent Platform SDK)
 """
 
-import os
-from google import genai
-from google.genai import types
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional, List
 
-from config                  import MODEL_NAME
-from tools.ingest_feedback   import ingest_feedback
-from tools.cluster_feedback  import cluster_feedback
-from tools.generate_insights import generate_insights
-from tools.search_feedback   import search_feedback
-from db                      import get_mongo_client
+from google.adk import Runner
+from google.adk.sessions import InMemorySessionService
+from google.adk.events import Event
+from google.genai import types
 
-# ── Init client Gemini (API Gemini directe) ─────────────────────────────────
-_client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
+from adk_agent                import root_agent, APP_NAME
+from tools.ingest_feedback    import ingest_feedback
+from tools.generate_insights  import generate_insights
+from db                       import get_mongo_client
 
-SYSTEM_INSTRUCTION = """
-Tu es un agent d'analyse de feedback produit pour des équipes SaaS early-stage.
-Tu as accès à des outils pour ingérer, clusteriser, analyser et rechercher des feedbacks.
-Réponds toujours en français. Sois concis, actionnable, et précis.
-"""
+# ── Runner ADK ───────────────────────────────────────────────────────────────
+_session_service = InMemorySessionService()
+_runner = Runner(agent=root_agent, app_name=APP_NAME, session_service=_session_service)
 
 # ── FastAPI app ─────────────────────────────────────────────────────────────
 app = FastAPI(title="Feedback Agent API")
@@ -127,86 +122,34 @@ async def api_feedbacks(project_id: str, cluster_id: Optional[str] = None):
 
 @app.post("/api/agent/chat")
 async def api_agent_chat(req: ChatRequest):
-    """Point d'entrée du chat agent — orchestre les tools selon la question."""
-    tools = [
-        types.Tool(function_declarations=[
-            types.FunctionDeclaration(
-                name="search_feedback",
-                description="Recherche des feedbacks par similarité sémantique ou mots-clés",
-                parameters={
-                    "type": "object",
-                    "properties": {
-                        "query":      {"type": "string", "description": "La question ou les mots-clés à rechercher"},
-                        "project_id": {"type": "string"},
-                        "limit":      {"type": "integer", "default": 10},
-                    },
-                    "required": ["query", "project_id"],
-                },
+    """Point d'entrée du chat agent — orchestré par le Runner ADK (plus de dispatch manuel)."""
+    session = await _session_service.create_session(app_name=APP_NAME, user_id=req.project_id)
+
+    # Reprendre l'historique court envoyé par le front (AgentChat.jsx, 6 derniers messages)
+    for m in req.history:
+        await _session_service.append_event(
+            session,
+            Event(
+                author="user" if m["role"] == "user" else root_agent.name,
+                content=types.Content(role=m["role"], parts=[types.Part(text=m["content"])]),
             ),
-            types.FunctionDeclaration(
-                name="generate_insights",
-                description="Génère ou rafraîchit les insights et recommandations pour un projet",
-                parameters={
-                    "type": "object",
-                    "properties": {
-                        "project_id": {"type": "string"},
-                    },
-                    "required": ["project_id"],
-                },
-            ),
-            types.FunctionDeclaration(
-                name="cluster_feedback",
-                description="Lance le reclustering des feedbacks d'un projet",
-                parameters={
-                    "type": "object",
-                    "properties": {
-                        "project_id": {"type": "string"},
-                    },
-                    "required": ["project_id"],
-                },
-            ),
-        ])
-    ]
-
-    # Construire l'historique pour Gemini
-    history = [
-        types.Content(role=m["role"], parts=[types.Part(text=m["content"])])
-        for m in req.history
-    ]
-
-    chat = _client.chats.create(
-        model=MODEL_NAME,
-        config=types.GenerateContentConfig(
-            system_instruction=SYSTEM_INSTRUCTION,
-            tools=tools,
-        ),
-        history=history,
-    )
-    response = chat.send_message(req.message + f"\n[project_id: {req.project_id}]")
-
-    # Gérer les appels de tools
-    while response.candidates[0].content.parts[0].function_call:
-        call = response.candidates[0].content.parts[0].function_call
-        fn_name = call.name
-        fn_args = dict(call.args)
-
-        if fn_name == "search_feedback":
-            tool_result = await search_feedback(**fn_args)
-        elif fn_name == "generate_insights":
-            tool_result = await generate_insights(**fn_args)
-        elif fn_name == "cluster_feedback":
-            tool_result = await cluster_feedback(**fn_args)
-        else:
-            tool_result = {"error": f"Tool inconnu : {fn_name}"}
-
-        response = chat.send_message(
-            types.Part.from_function_response(
-                name=fn_name,
-                response={"content": str(tool_result)},
-            )
         )
 
-    return {"response": response.text}
+    new_message = types.Content(
+        role="user",
+        parts=[types.Part(text=req.message + f"\n[project_id: {req.project_id}]")],
+    )
+
+    final_text = ""
+    async for event in _runner.run_async(
+        user_id=session.user_id, session_id=session.id, new_message=new_message
+    ):
+        if event.content and event.content.parts:
+            for part in event.content.parts:
+                if part.text:
+                    final_text = part.text
+
+    return {"response": final_text}
 
 
 @app.post("/api/insights/refresh")
