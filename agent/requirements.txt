@@ -3,6 +3,7 @@ uvicorn[standard]==0.52.3
 pymongo==4.8.0
 google-genai==2.18.1
 google-adk==2.7.1
+google-cloud-aiplatform==1.164.0
 numpy==1.26.4
 pydantic==2.13.4
 python-multipart==0.0.9
