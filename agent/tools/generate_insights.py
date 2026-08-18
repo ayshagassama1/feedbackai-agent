@@ -8,17 +8,12 @@ import json
 import re
 from datetime import datetime, timezone, timedelta
 
-import vertexai
-from vertexai.generative_models import GenerativeModel
+from google import genai
 
 from db import get_mongo_client
+from config import MODEL_NAME
 
-vertexai.init(
-    project=os.environ["GCP_PROJECT_ID"],
-    location=os.environ.get("GCP_REGION", "us-central1"),
-)
-
-_model = GenerativeModel("gemini-2.0-flash")
+_client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
 
 
 async def generate_insights(project_id: str) -> dict:
@@ -107,7 +102,7 @@ Réponds UNIQUEMENT en JSON valide (sans markdown) :
 ]
 """
 
-    rec_response = _model.generate_content(rec_prompt)
+    rec_response = _client.models.generate_content(model=MODEL_NAME, contents=rec_prompt)
     raw = rec_response.text.strip()
     raw = re.sub(r"```(?:json)?", "", raw).strip().rstrip("`")
 

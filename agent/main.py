@@ -4,33 +4,28 @@ Basé sur Google Cloud Agent Builder (Gemini Enterprise Agent Platform SDK)
 """
 
 import os
-import vertexai
-from vertexai.preview.generative_models import GenerativeModel, Tool, FunctionDeclaration
+from google import genai
+from google.genai import types
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional, List
 
-from tools.ingest_feedback  import ingest_feedback
-from tools.cluster_feedback import cluster_feedback
+from config                  import MODEL_NAME
+from tools.ingest_feedback   import ingest_feedback
+from tools.cluster_feedback  import cluster_feedback
 from tools.generate_insights import generate_insights
-from tools.search_feedback  import search_feedback
-from db                     import get_mongo_client
+from tools.search_feedback   import search_feedback
+from db                      import get_mongo_client
 
-# ── Init Vertex AI ──────────────────────────────────────────────────────────
-vertexai.init(
-    project=os.environ["GCP_PROJECT_ID"],
-    location=os.environ.get("GCP_REGION", "us-central1"),
-)
+# ── Init client Gemini (API Gemini directe) ─────────────────────────────────
+_client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
 
-model = GenerativeModel(
-    model_name="gemini-2.0-flash",
-    system_instruction="""
-    Tu es un agent d'analyse de feedback produit pour des équipes SaaS early-stage.
-    Tu as accès à des outils pour ingérer, clusteriser, analyser et rechercher des feedbacks.
-    Réponds toujours en français. Sois concis, actionnable, et précis.
-    """,
-)
+SYSTEM_INSTRUCTION = """
+Tu es un agent d'analyse de feedback produit pour des équipes SaaS early-stage.
+Tu as accès à des outils pour ingérer, clusteriser, analyser et rechercher des feedbacks.
+Réponds toujours en français. Sois concis, actionnable, et précis.
+"""
 
 # ── FastAPI app ─────────────────────────────────────────────────────────────
 app = FastAPI(title="Feedback Agent API")
@@ -134,8 +129,8 @@ async def api_feedbacks(project_id: str, cluster_id: Optional[str] = None):
 async def api_agent_chat(req: ChatRequest):
     """Point d'entrée du chat agent — orchestre les tools selon la question."""
     tools = [
-        Tool(function_declarations=[
-            FunctionDeclaration(
+        types.Tool(function_declarations=[
+            types.FunctionDeclaration(
                 name="search_feedback",
                 description="Recherche des feedbacks par similarité sémantique ou mots-clés",
                 parameters={
@@ -148,7 +143,7 @@ async def api_agent_chat(req: ChatRequest):
                     "required": ["query", "project_id"],
                 },
             ),
-            FunctionDeclaration(
+            types.FunctionDeclaration(
                 name="generate_insights",
                 description="Génère ou rafraîchit les insights et recommandations pour un projet",
                 parameters={
@@ -159,7 +154,7 @@ async def api_agent_chat(req: ChatRequest):
                     "required": ["project_id"],
                 },
             ),
-            FunctionDeclaration(
+            types.FunctionDeclaration(
                 name="cluster_feedback",
                 description="Lance le reclustering des feedbacks d'un projet",
                 parameters={
@@ -175,18 +170,22 @@ async def api_agent_chat(req: ChatRequest):
 
     # Construire l'historique pour Gemini
     history = [
-        {"role": m["role"], "parts": [{"text": m["content"]}]}
+        types.Content(role=m["role"], parts=[types.Part(text=m["content"])])
         for m in req.history
     ]
 
-    chat = model.start_chat(history=history)
-    response = chat.send_message(
-        req.message + f"\n[project_id: {req.project_id}]",
-        tools=tools,
+    chat = _client.chats.create(
+        model=MODEL_NAME,
+        config=types.GenerateContentConfig(
+            system_instruction=SYSTEM_INSTRUCTION,
+            tools=tools,
+        ),
+        history=history,
     )
+    response = chat.send_message(req.message + f"\n[project_id: {req.project_id}]")
 
     # Gérer les appels de tools
-    while response.candidates[0].content.parts[0].function_call.name:
+    while response.candidates[0].content.parts[0].function_call:
         call = response.candidates[0].content.parts[0].function_call
         fn_name = call.name
         fn_args = dict(call.args)
@@ -201,7 +200,7 @@ async def api_agent_chat(req: ChatRequest):
             tool_result = {"error": f"Tool inconnu : {fn_name}"}
 
         response = chat.send_message(
-            vertexai.preview.generative_models.Part.from_function_response(
+            types.Part.from_function_response(
                 name=fn_name,
                 response={"content": str(tool_result)},
             )

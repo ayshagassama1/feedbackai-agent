@@ -4,16 +4,13 @@ Recherche sémantique via MongoDB Atlas Vector Search + filtre par catégorie/se
 """
 
 import os
-import vertexai
-from vertexai.language_models import TextEmbeddingModel
+from google import genai
+from google.genai import types
+
 from db import get_mongo_client
+from config import EMBEDDING_MODEL, EMBEDDING_DIMENSIONS
 
-vertexai.init(
-    project=os.environ["GCP_PROJECT_ID"],
-    location=os.environ.get("GCP_REGION", "us-central1"),
-)
-
-_embedding_model = TextEmbeddingModel.from_pretrained("text-embedding-005")
+_client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
 
 # Nom de l'index Vector Search créé dans Atlas
 VECTOR_INDEX_NAME = "feedback_vector_index"
@@ -44,8 +41,12 @@ async def search_feedback(
     db = get_mongo_client()
 
     # ── Vectoriser la requête ────────────────────────────────────────────────
-    embeddings = _embedding_model.get_embeddings([query])
-    query_vector = embeddings[0].values
+    embed_response = _client.models.embed_content(
+        model=EMBEDDING_MODEL,
+        contents=query,
+        config=types.EmbedContentConfig(output_dimensionality=EMBEDDING_DIMENSIONS),
+    )
+    query_vector = embed_response.embeddings[0].values
 
     # ── Construire le filtre MongoDB ─────────────────────────────────────────
     pre_filter = {"project_id": {"$eq": project_id}}

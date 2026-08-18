@@ -1,34 +1,28 @@
 """
-Script jetable vérifie l'accès Vertex AI et la disponibilité de gemini-2.5-flash.
+Script jetable — vérifie l'accès à gemini-3.5-flash via l'API Gemini directe.
 
-gemini-3.5-flash (décision de cadrage initiale) a été mesuré indisponible (404) sur le
-projet feedbackai-497622, testé sur us-central1/europe-west1/europe-west4. Seuls
-gemini-2.5-flash et gemini-2.5-pro répondent réellement à ce jour ; gemini-2.5-flash a été
-retenu (corrigé avec Aissatou le 2026-08-18).
+Décision de cadrage : gemini-3.5-flash (exigé par le règlement du hackathon) a été mesuré
+indisponible sur Vertex AI pour ce projet (404, testé sur plusieurs régions, avec l'ancien
+SDK vertexai et le nouveau google-genai en mode Vertex), mais fonctionne via l'API Gemini
+directe (google-genai + clé API). Confirmé end-to-end (chat, function calling, embeddings
+768 dims) avec Aissatou le 2026-08-18.
 
 Usage : python scripts/check_model.py
-Prérequis : GCP_PROJECT_ID (et optionnellement GCP_REGION) en variables d'environnement,
-Application Default Credentials configurées (gcloud auth application-default login).
+Prérequis : GEMINI_API_KEY en variable d'environnement.
 """
 
 import os
-import vertexai
-from vertexai.generative_models import GenerativeModel
+from google import genai
 
-MODEL_NAME = "gemini-2.5-flash"
+MODEL_NAME = "gemini-3.5-flash"
 
 
 def main():
-    project = os.environ["GCP_PROJECT_ID"]
-    region = os.environ.get("GCP_REGION", "us-central1")
+    client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
 
-    vertexai.init(project=project, location=region)
-    model = GenerativeModel(MODEL_NAME)
+    response = client.models.generate_content(model=MODEL_NAME, contents="Réponds uniquement par : ok")
 
-    response = model.generate_content("Réponds uniquement par : ok")
     print(f"Modèle   : {MODEL_NAME}")
-    print(f"Projet   : {project}")
-    print(f"Région   : {region}")
     print(f"Réponse  : {response.text.strip()}")
 
 

@@ -8,19 +8,13 @@ import re
 import hashlib
 from datetime import datetime, timezone
 
-import vertexai
-from vertexai.generative_models import GenerativeModel
-from vertexai.language_models    import TextEmbeddingModel
+from google import genai
+from google.genai import types
 
 from db import get_mongo_client
+from config import MODEL_NAME, EMBEDDING_MODEL, EMBEDDING_DIMENSIONS
 
-vertexai.init(
-    project=os.environ["GCP_PROJECT_ID"],
-    location=os.environ.get("GCP_REGION", "us-central1"),
-)
-
-_classifier     = GenerativeModel("gemini-2.0-flash")
-_embedding_model = TextEmbeddingModel.from_pretrained("text-embedding-005")
+_client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
 
 CATEGORIES = ["bug", "feature_request", "ux", "pricing", "other"]
 PRIORITIES  = ["high", "medium", "low"]
@@ -85,7 +79,7 @@ Summary              : résumé en 1 phrase max (même langue que le feedback)
 Feedback : "{text}"
 """
 
-    response = _classifier.generate_content(classification_prompt)
+    response = _client.models.generate_content(model=MODEL_NAME, contents=classification_prompt)
     raw = response.text.strip()
 
     import json
@@ -102,8 +96,12 @@ Feedback : "{text}"
     summary   = parsed.get("summary",   "")
 
     # ── 5. Vectorisation (embeddings Gemini) ─────────────────────────────────
-    embeddings = _embedding_model.get_embeddings([text])
-    vector = embeddings[0].values  # liste de 768 floats
+    embed_response = _client.models.embed_content(
+        model=EMBEDDING_MODEL,
+        contents=text,
+        config=types.EmbedContentConfig(output_dimensionality=EMBEDDING_DIMENSIONS),
+    )
+    vector = embed_response.embeddings[0].values  # liste de 768 floats
 
     # ── 6. Stockage MongoDB ──────────────────────────────────────────────────
     doc = {

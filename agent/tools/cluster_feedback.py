@@ -2,22 +2,17 @@
 Tool : cluster_feedback
 Utilise MongoDB Atlas Vector Search pour regrouper les feedbacks par similarité sémantique.
 """
- 
+
 import os
 import numpy as np
 from datetime import datetime, timezone
 
-import vertexai
-from vertexai.generative_models import GenerativeModel
+from google import genai
 
 from db import get_mongo_client
+from config import MODEL_NAME
 
-vertexai.init(
-    project=os.environ["GCP_PROJECT_ID"],
-    location=os.environ.get("GCP_REGION", "us-central1"),
-)
-
-_model = GenerativeModel("gemini-2.0-flash")
+_client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
 
 SIMILARITY_THRESHOLD = 0.82   # seuil de similarité cosine pour regrouper
 MIN_CLUSTER_SIZE     = 2      # nb minimum de feedbacks pour former un cluster
@@ -93,7 +88,7 @@ qui résume le thème commun. Réponds UNIQUEMENT avec le label, sans ponctuatio
 Feedbacks :
 {chr(10).join(f'- {t}' for t in sample_texts)}
 """
-        label_response = _model.generate_content(label_prompt)
+        label_response = _client.models.generate_content(model=MODEL_NAME, contents=label_prompt)
         label = label_response.text.strip()[:60]
 
         member_ids = [str(m["_id"]) for m in cluster["members"]]
