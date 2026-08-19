@@ -13,7 +13,8 @@ from google import genai
 from google.genai import types
 
 from db import get_mongo_client
-from config import MODEL_NAME
+from config import MODEL_NAME, TICKET_MIN_FEEDBACK_COUNT, TICKET_SENTIMENT_THRESHOLD
+from tools.notify import notify
 
 _client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
 
@@ -64,7 +65,8 @@ async def create_ticket(project_id: str, cluster_id: str) -> dict:
         cluster_id : identifiant du cluster (db.clusters._id, forme string)
 
     Returns:
-        dict avec issue_url, issue_number, created (False si le cluster était déjà ticketé)
+        dict avec issue_url, issue_number, created (False si le cluster était déjà ticketé ou
+        si le seuil de déclenchement n'est pas atteint — voir `skipped`/`reason`)
     """
     db = get_mongo_client()
     cluster = db.clusters.find_one({"_id": ObjectId(cluster_id), "project_id": project_id})
@@ -77,6 +79,19 @@ async def create_ticket(project_id: str, cluster_id: str) -> dict:
             "issue_url": cluster["issue_url"],
             "issue_number": cluster["issue_number"],
             "created": False,
+        }
+
+    # ── Seuil de déclenchement : évite le bruit (étape 2.2) ──────────────────────
+    feedback_count = cluster["feedback_count"]
+    avg_sentiment  = cluster.get("avg_sentiment", 0.0)
+    if feedback_count < TICKET_MIN_FEEDBACK_COUNT or avg_sentiment > TICKET_SENTIMENT_THRESHOLD:
+        return {
+            "created": False,
+            "skipped": True,
+            "reason": (
+                f"seuil non atteint (feedback_count={feedback_count} < {TICKET_MIN_FEEDBACK_COUNT} "
+                f"ou avg_sentiment={avg_sentiment:.2f} > {TICKET_SENTIMENT_THRESHOLD})"
+            ),
         }
 
     samples = list(
@@ -123,6 +138,18 @@ async def create_ticket(project_id: str, cluster_id: str) -> dict:
     db.clusters.update_one(
         {"_id": cluster["_id"]},
         {"$set": {"issue_url": issue_url, "issue_number": issue_number}},
+    )
+
+    await notify(
+        project_id=project_id,
+        message_fr=(
+            f"Nouveau ticket créé pour le cluster « {cluster['label']} » "
+            f"({feedback_count} feedbacks, sentiment moyen {avg_sentiment:.2f}) : {issue_url}"
+        ),
+        message_en=(
+            f'New ticket created for cluster "{cluster["label"]}" '
+            f"({feedback_count} feedbacks, avg sentiment {avg_sentiment:.2f}): {issue_url}"
+        ),
     )
 
     return {"issue_url": issue_url, "issue_number": issue_number, "created": True}

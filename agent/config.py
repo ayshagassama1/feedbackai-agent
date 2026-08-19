@@ -10,3 +10,9 @@ mais fonctionne via l'API Gemini. Décidé avec Aissatou le 2026-08-18.
 MODEL_NAME = "gemini-3.5-flash"
 EMBEDDING_MODEL = "gemini-embedding-001"
 EMBEDDING_DIMENSIONS = 768
+
+# Seuil de déclenchement pour create_ticket — évite le bruit (PHASE 2, étape 2.2). Un cluster
+# doit atteindre les deux conditions pour être ticketé : assez de volume ET un sentiment
+# suffisamment négatif.
+TICKET_MIN_FEEDBACK_COUNT = 3
+TICKET_SENTIMENT_THRESHOLD = -0.3
