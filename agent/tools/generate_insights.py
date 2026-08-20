@@ -110,7 +110,7 @@ Top catégories :
 Génère exactement 3 recommandations actionnables pour cette semaine.
 """
 
-    rec_response = _client.models.generate_content(
+    rec_response = await _client.aio.models.generate_content(
         model=MODEL_NAME,
         contents=rec_prompt,
         config=types.GenerateContentConfig(

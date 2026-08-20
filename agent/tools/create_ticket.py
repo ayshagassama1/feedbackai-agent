@@ -106,7 +106,7 @@ async def create_ticket(project_id: str, cluster_id: str) -> dict:
         samples=samples_text,
     )
 
-    response = _client.models.generate_content(
+    response = await _client.aio.models.generate_content(
         model=MODEL_NAME,
         contents=prompt,
         config=types.GenerateContentConfig(

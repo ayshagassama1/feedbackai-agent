@@ -41,7 +41,7 @@ async def search_feedback(
     db = get_mongo_client()
 
     # ── Vectoriser la requête ────────────────────────────────────────────────
-    embed_response = _client.models.embed_content(
+    embed_response = await _client.aio.models.embed_content(
         model=EMBEDDING_MODEL,
         contents=query,
         config=types.EmbedContentConfig(output_dimensionality=EMBEDDING_DIMENSIONS),

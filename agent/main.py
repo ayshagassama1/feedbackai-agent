@@ -3,7 +3,10 @@ Feedback Agent — orchestrateur principal
 Basé sur Google Cloud Agent Builder (Gemini Enterprise Agent Platform SDK)
 """
 
-from fastapi import FastAPI, HTTPException
+import os
+import logging
+
+from fastapi import FastAPI, HTTPException, BackgroundTasks, Header
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional, List
@@ -15,8 +18,14 @@ from google.genai import types
 
 from adk_agent                import root_agent, APP_NAME
 from tools.ingest_feedback    import ingest_feedback
+from tools.cluster_feedback   import cluster_feedback
 from tools.generate_insights  import generate_insights
+from tools.create_ticket      import create_ticket
 from db                       import get_mongo_client
+
+logger = logging.getLogger("feedback_agent.main")
+
+RUN_CYCLE_SECRET = os.environ.get("RUN_CYCLE_SECRET", "")
 
 # ── Runner ADK ───────────────────────────────────────────────────────────────
 _session_service = InMemorySessionService()
@@ -45,18 +54,19 @@ class ChatRequest(BaseModel):
 
 # ── Routes ──────────────────────────────────────────────────────────────────
 
-@app.post("/api/ingest")
-async def api_ingest(req: IngestTextRequest):
-    """Ingère un feedback texte ou URL."""
+async def _ingest_feedback_background(project_id: str, source: str, content: str) -> None:
+    """Exécute l'ingestion complète (classification, embedding, écriture) en tâche de fond."""
     try:
-        result = await ingest_feedback(
-            project_id=req.project_id,
-            source=req.source,
-            content=req.content,
-        )
-        return result
+        await ingest_feedback(project_id=project_id, source=source, content=content)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error("Échec de l'ingestion en tâche de fond (project=%s) : %s", project_id, e)
+
+
+@app.post("/api/ingest", status_code=202)
+async def api_ingest(req: IngestTextRequest, background_tasks: BackgroundTasks):
+    """Accepte un feedback texte ou URL et l'ingère en tâche de fond (réponse immédiate)."""
+    background_tasks.add_task(_ingest_feedback_background, req.project_id, req.source, req.content)
+    return {"status": "queued", "project_id": req.project_id}
 
 
 @app.post("/api/ingest/csv")
@@ -150,6 +160,49 @@ async def api_agent_chat(req: ChatRequest):
                     final_text = part.text
 
     return {"response": final_text}
+
+
+class RunCycleRequest(BaseModel):
+    project_id: str
+
+
+@app.post("/api/agent/run-cycle")
+async def api_run_cycle(
+    req: RunCycleRequest,
+    x_run_cycle_secret: Optional[str] = Header(None, alias="X-Run-Cycle-Secret"),
+):
+    """
+    Cycle autonome complet pour un projet : (re)clustering -> insights -> pour chaque cluster
+    éligible et non ticketé, création de ticket + notification.
+
+    Protégé par un secret partagé (RUN_CYCLE_SECRET) en en-tête, jamais public — destiné à être
+    déclenché par Cloud Scheduler -> Pub/Sub (PHASE 3, étape 3.2), pas par un client ouvert.
+    """
+    if not RUN_CYCLE_SECRET or x_run_cycle_secret != RUN_CYCLE_SECRET:
+        raise HTTPException(status_code=401, detail="Secret invalide ou manquant.")
+
+    project_id = req.project_id
+
+    clustering_result = await cluster_feedback(project_id=project_id)
+    insights_result = await generate_insights(project_id=project_id)
+
+    db = get_mongo_client()
+    clusters = list(db.clusters.find({"project_id": project_id}))
+
+    ticket_results = []
+    for c in clusters:
+        result = await create_ticket(project_id=project_id, cluster_id=str(c["_id"]))
+        ticket_results.append({"cluster_id": str(c["_id"]), "label": c["label"], **result})
+
+    return {
+        "project_id": project_id,
+        "clustering": clustering_result,
+        "insights": {
+            "stats": insights_result.get("stats"),
+            "recommendations": insights_result.get("recommendations"),
+        },
+        "tickets": ticket_results,
+    }
 
 
 @app.post("/api/insights/refresh")

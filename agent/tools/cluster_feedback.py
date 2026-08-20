@@ -96,7 +96,7 @@ qui résume le thème commun, sans ponctuation finale.
 Feedbacks :
 {chr(10).join(f'- {t}' for t in sample_texts)}
 """
-        label_response = _client.models.generate_content(
+        label_response = await _client.aio.models.generate_content(
             model=MODEL_NAME,
             contents=label_prompt,
             config=types.GenerateContentConfig(

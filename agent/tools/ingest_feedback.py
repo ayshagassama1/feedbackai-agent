@@ -100,7 +100,7 @@ async def _triage(text: str) -> dict:
     except (GemmaUnavailableError, json.JSONDecodeError, ValueError) as e:
         logger.info("Gemma indisponible ou réponse invalide (%s), fallback Gemini.", e)
 
-    response = _client.models.generate_content(
+    response = await _client.aio.models.generate_content(
         model=MODEL_NAME,
         contents=prompt,
         config=types.GenerateContentConfig(
@@ -157,7 +157,7 @@ async def ingest_feedback(
     )
 
     # ── 4. Vectorisation (embeddings Gemini) ─────────────────────────────────
-    embed_response = _client.models.embed_content(
+    embed_response = await _client.aio.models.embed_content(
         model=EMBEDDING_MODEL,
         contents=text,
         config=types.EmbedContentConfig(output_dimensionality=EMBEDDING_DIMENSIONS),

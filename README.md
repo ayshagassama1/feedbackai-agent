@@ -83,6 +83,19 @@ Gemma, une fois le crédit hackathon confirmé :
    Le fallback Gemini garantit que couper l'endpoint ne casse rien : l'app continue de
    fonctionner sans lui.
 
+## Lancement local
+
+```bash
+cd agent
+uvicorn main:app --host 0.0.0.0 --port 8000 --loop asyncio
+```
+
+**`--loop asyncio` est obligatoire**, pas juste une option : `uvloop` (la boucle par défaut
+d'uvicorn) casse silencieusement les appels HTTP sortants d'`httpx` vers l'API GitHub
+(`ConnectTimeout`), utilisée par `create_ticket`. Mesuré et reproduit hors serveur pendant
+l'étape 3.1 — sans ce flag, `POST /api/agent/run-cycle` échoue en 500 dès qu'un ticket doit
+être créé.
+
 ## Variables d'environnement
 
 Voir `.env.example` pour la liste complète. Résumé :
