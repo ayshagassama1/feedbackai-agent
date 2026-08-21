@@ -1,5 +1,7 @@
 import { useState, useEffect } from "react";
 
+const API_URL = import.meta.env.VITE_API_URL ?? "";
+
 export default function ClusterView({ projectId }) {
   const [clusters, setClusters] = useState([]);
   const [selected, setSelected] = useState(null);
@@ -7,7 +9,7 @@ export default function ClusterView({ projectId }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    fetch(`/api/clusters?project_id=${projectId}`)
+    fetch(`${API_URL}/api/clusters?project_id=${projectId}`)
       .then((r) => r.json())
       .then((data) => { setClusters(data.clusters ?? []); setLoading(false); })
       .catch(() => setLoading(false));
@@ -15,7 +17,7 @@ export default function ClusterView({ projectId }) {
 
   const selectCluster = async (cluster) => {
     setSelected(cluster);
-    const res = await fetch(`/api/feedbacks?cluster_id=${cluster._id}&project_id=${projectId}`);
+    const res = await fetch(`${API_URL}/api/feedbacks?cluster_id=${cluster._id}&project_id=${projectId}`);
     const data = await res.json();
     setFeedbacks(data.feedbacks ?? []);
   };

@@ -1,5 +1,7 @@
 import { useState, useEffect } from "react";
 
+const API_URL = import.meta.env.VITE_API_URL ?? "";
+
 const CATEGORY_COLORS = {
   bug:             { bg: "#fef2f2", text: "#b91c1c", border: "#fca5a5" },
   feature_request: { bg: "#eff6ff", text: "#1d4ed8", border: "#93c5fd" },
@@ -24,7 +26,7 @@ export default function InsightsDashboard({ projectId }) {
     if (!silent) setLoading(true);
     else setRefreshing(true);
     try {
-      const res = await fetch(`/api/insights?project_id=${projectId}`);
+      const res = await fetch(`${API_URL}/api/insights?project_id=${projectId}`);
       if (!res.ok) throw new Error(`Erreur ${res.status}`);
       const data = await res.json();
       setInsights(data);

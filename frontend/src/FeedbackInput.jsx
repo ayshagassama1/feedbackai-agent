@@ -1,5 +1,7 @@
 import { useState, useRef } from "react";
 
+const API_URL = import.meta.env.VITE_API_URL ?? "";
+
 const MODES = [
   { id: "text", label: "Texte libre", icon: "✏️" },
   { id: "csv",  label: "CSV",         icon: "📄" },
@@ -62,7 +64,7 @@ export default function FeedbackInput({ projectId, onSuccess }) {
         });
       }
 
-      const res = await fetch("/api/ingest", {
+      const res = await fetch(`${API_URL}/api/ingest`, {
         method: "POST",
         headers,
         body,

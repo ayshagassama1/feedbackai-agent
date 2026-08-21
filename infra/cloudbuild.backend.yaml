@@ -3,13 +3,13 @@ steps:
     args:
       - build
       - -t
-      - gcr.io/$PROJECT_ID/feedback-agent:$COMMIT_SHA
+      - gcr.io/$PROJECT_ID/feedback-agent:$BUILD_ID
       - ./agent
 
   - name: "gcr.io/cloud-builders/docker"
     args:
       - push
-      - gcr.io/$PROJECT_ID/feedback-agent:$COMMIT_SHA
+      - gcr.io/$PROJECT_ID/feedback-agent:$BUILD_ID
 
   - name: "gcr.io/google.com/cloudsdktool/cloud-sdk"
     entrypoint: gcloud
@@ -17,13 +17,22 @@ steps:
       - run
       - deploy
       - feedback-agent
-      - --image=gcr.io/$PROJECT_ID/feedback-agent:$COMMIT_SHA
+      - --image=gcr.io/$PROJECT_ID/feedback-agent:$BUILD_ID
       - --region=us-central1
       - --platform=managed
       - --allow-unauthenticated
-      - --set-env-vars=GCP_PROJECT_ID=$PROJECT_ID
       - --memory=1Gi
       - --cpu=1
+      - --set-env-vars=GCP_PROJECT_ID=$PROJECT_ID,MONGODB_DB=feedbackai,GEMMA_LOCATION=${_GEMMA_LOCATION},GEMMA_ENDPOINT_ID=${_GEMMA_ENDPOINT_ID}
+      - --set-secrets=GEMINI_API_KEY=gemini-api-key:latest,MONGODB_URI=mongodb-uri:latest,GITHUB_TOKEN=github-token:latest,GITHUB_REPO_MAP=github-repo-map:latest,RUN_CYCLE_SECRET=run-cycle-secret:latest
 
 images:
-  - gcr.io/$PROJECT_ID/feedback-agent:$COMMIT_SHA
+  - gcr.io/$PROJECT_ID/feedback-agent:$BUILD_ID
+
+substitutions:
+  # GEMMA_ENDPOINT_ID vide par défaut -> fallback Gemini automatique tant que Gemma
+  # n'est pas déployé. La mettre à jour ensuite avec :
+  #   gcloud run services update feedback-agent --region=us-central1 \
+  #     --update-env-vars=GEMMA_ENDPOINT_ID=<id>
+  _GEMMA_LOCATION: "us-central1"
+  _GEMMA_ENDPOINT_ID: ""

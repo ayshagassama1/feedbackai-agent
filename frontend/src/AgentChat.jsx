@@ -1,5 +1,7 @@
 import { useState, useRef, useEffect } from "react";
 
+const API_URL = import.meta.env.VITE_API_URL ?? "";
+
 const SUGGESTIONS = [
   "Quels sont les bugs les plus signalés cette semaine ?",
   "Montre-moi les feedbacks négatifs sur l'onboarding",
@@ -30,7 +32,7 @@ export default function AgentChat({ projectId }) {
     setLoading(true);
 
     try {
-      const res = await fetch("/api/agent/chat", {
+      const res = await fetch(`${API_URL}/api/agent/chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

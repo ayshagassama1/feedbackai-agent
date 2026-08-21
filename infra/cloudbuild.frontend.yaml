@@ -1,0 +1,37 @@
+steps:
+  - name: "gcr.io/cloud-builders/docker"
+    args:
+      - build
+      - --build-arg
+      - VITE_API_URL=${_BACKEND_URL}
+      - --build-arg
+      - VITE_PROJECT_ID=${_VITE_PROJECT_ID}
+      - -t
+      - gcr.io/$PROJECT_ID/feedback-agent-frontend:$BUILD_ID
+      - ./frontend
+
+  - name: "gcr.io/cloud-builders/docker"
+    args:
+      - push
+      - gcr.io/$PROJECT_ID/feedback-agent-frontend:$BUILD_ID
+
+  - name: "gcr.io/google.com/cloudsdktool/cloud-sdk"
+    entrypoint: gcloud
+    args:
+      - run
+      - deploy
+      - feedback-agent-frontend
+      - --image=gcr.io/$PROJECT_ID/feedback-agent-frontend:$BUILD_ID
+      - --region=us-central1
+      - --platform=managed
+      - --allow-unauthenticated
+      - --memory=512Mi
+      - --cpu=1
+
+images:
+  - gcr.io/$PROJECT_ID/feedback-agent-frontend:$BUILD_ID
+
+substitutions:
+  _VITE_PROJECT_ID: "demo"
+  # _BACKEND_URL : à passer obligatoirement à la soumission (URL du service backend déployé),
+  # ex. --substitutions=_BACKEND_URL=https://feedback-agent-xxxx.run.app
