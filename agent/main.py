@@ -4,9 +4,11 @@ Basé sur Google Cloud Agent Builder (Gemini Enterprise Agent Platform SDK)
 """
 
 import os
+import json
+import base64
 import logging
 
-from fastapi import FastAPI, HTTPException, BackgroundTasks, Header
+from fastapi import FastAPI, HTTPException, BackgroundTasks, Header, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional, List
@@ -15,6 +17,8 @@ from google.adk import Runner
 from google.adk.sessions import InMemorySessionService
 from google.adk.events import Event
 from google.genai import types
+from google.oauth2 import id_token as google_id_token
+from google.auth.transport import requests as google_auth_requests
 
 from adk_agent                import root_agent, APP_NAME
 from tools.ingest_feedback    import ingest_feedback
@@ -26,6 +30,29 @@ from db                       import get_mongo_client
 logger = logging.getLogger("feedback_agent.main")
 
 RUN_CYCLE_SECRET = os.environ.get("RUN_CYCLE_SECRET", "")
+
+# ── Auth Pub/Sub push (jeton OIDC) — étape 3.2 ───────────────────────────────
+PUBSUB_PUSH_SERVICE_ACCOUNT = os.environ.get("PUBSUB_PUSH_SERVICE_ACCOUNT", "")
+RUN_CYCLE_AUDIENCE = os.environ.get("RUN_CYCLE_AUDIENCE", "")
+_google_auth_request = google_auth_requests.Request()
+
+
+def _verify_pubsub_oidc(authorization_header: Optional[str]) -> bool:
+    """Vérifie un jeton OIDC signé par Google, émis pour le compte de service de la
+    subscription push Pub/Sub, avec l'audience attendue (URL de cet endpoint)."""
+    if not authorization_header or not authorization_header.startswith("Bearer "):
+        return False
+    if not PUBSUB_PUSH_SERVICE_ACCOUNT or not RUN_CYCLE_AUDIENCE:
+        return False
+    token = authorization_header[len("Bearer "):]
+    try:
+        claims = google_id_token.verify_oauth2_token(
+            token, _google_auth_request, audience=RUN_CYCLE_AUDIENCE
+        )
+    except Exception as e:
+        logger.warning("Jeton OIDC invalide sur /api/agent/run-cycle : %s", e)
+        return False
+    return claims.get("email") == PUBSUB_PUSH_SERVICE_ACCOUNT and claims.get("email_verified")
 
 # ── Runner ADK ───────────────────────────────────────────────────────────────
 _session_service = InMemorySessionService()
@@ -162,26 +189,42 @@ async def api_agent_chat(req: ChatRequest):
     return {"response": final_text}
 
 
-class RunCycleRequest(BaseModel):
-    project_id: str
-
-
 @app.post("/api/agent/run-cycle")
 async def api_run_cycle(
-    req: RunCycleRequest,
+    request: Request,
     x_run_cycle_secret: Optional[str] = Header(None, alias="X-Run-Cycle-Secret"),
+    authorization: Optional[str] = Header(None),
 ):
     """
     Cycle autonome complet pour un projet : (re)clustering -> insights -> pour chaque cluster
     éligible et non ticketé, création de ticket + notification.
 
-    Protégé par un secret partagé (RUN_CYCLE_SECRET) en en-tête, jamais public — destiné à être
-    déclenché par Cloud Scheduler -> Pub/Sub (PHASE 3, étape 3.2), pas par un client ouvert.
+    Jamais public. Deux façons d'authentifier une requête :
+    - Jeton OIDC (Authorization: Bearer ...) émis pour la subscription push Pub/Sub
+      (PHASE 3, étape 3.2) — le corps est alors l'enveloppe standard Pub/Sub push
+      ({"message": {"data": "<project_id en JSON, base64>", ...}}).
+    - Secret partagé (X-Run-Cycle-Secret) pour un appel direct (tests, débogage) — le corps
+      est alors {"project_id": "..."} directement.
     """
-    if not RUN_CYCLE_SECRET or x_run_cycle_secret != RUN_CYCLE_SECRET:
-        raise HTTPException(status_code=401, detail="Secret invalide ou manquant.")
+    body = await request.json()
 
-    project_id = req.project_id
+    if _verify_pubsub_oidc(authorization):
+        message = body.get("message", {})
+        data_b64 = message.get("data", "")
+        if not data_b64:
+            raise HTTPException(status_code=400, detail="Message Pub/Sub sans champ data.")
+        try:
+            payload = json.loads(base64.b64decode(data_b64).decode("utf-8"))
+        except (ValueError, UnicodeDecodeError) as e:
+            raise HTTPException(status_code=400, detail=f"Message Pub/Sub illisible : {e}")
+        project_id = payload.get("project_id")
+    elif RUN_CYCLE_SECRET and x_run_cycle_secret == RUN_CYCLE_SECRET:
+        project_id = body.get("project_id")
+    else:
+        raise HTTPException(status_code=401, detail="Requête non authentifiée.")
+
+    if not project_id:
+        raise HTTPException(status_code=400, detail="project_id manquant.")
 
     clustering_result = await cluster_feedback(project_id=project_id)
     insights_result = await generate_insights(project_id=project_id)

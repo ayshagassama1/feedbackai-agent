@@ -83,6 +83,95 @@ Gemma, une fois le crédit hackathon confirmé :
    Le fallback Gemini garantit que couper l'endpoint ne casse rien : l'app continue de
    fonctionner sans lui.
 
+## Déclenchement planifié (Cloud Scheduler + Pub/Sub)
+
+**Préalable : le backend doit déjà tourner sur Cloud Run** (étape 5.3) — la subscription push a
+besoin d'une URL réelle. Si ce n'est pas encore fait, garde cette section pour plus tard.
+
+Architecture : `Cloud Scheduler` publie sur un topic `Pub/Sub`, qui pousse (avec un jeton OIDC)
+vers `POST /api/agent/run-cycle` sur Cloud Run. L'endpoint vérifie ce jeton lui-même (voir
+`agent/main.py`) — jamais de service public non authentifié.
+
+1. **Variables** (à adapter) :
+   ```bash
+   PROJECT_ID=feedbackai-497622
+   REGION=us-central1
+   SERVICE_NAME=feedback-agent
+   ```
+
+2. **Compte de service dédié à Pub/Sub** :
+   ```bash
+   gcloud iam service-accounts create pubsub-run-cycle-invoker \
+     --display-name="Pub/Sub push invoker pour run-cycle" \
+     --project=$PROJECT_ID
+   ```
+
+3. **Autoriser ce compte à appeler le service Cloud Run** :
+   ```bash
+   gcloud run services add-iam-policy-binding $SERVICE_NAME \
+     --region=$REGION \
+     --member="serviceAccount:pubsub-run-cycle-invoker@${PROJECT_ID}.iam.gserviceaccount.com" \
+     --role="roles/run.invoker"
+   ```
+
+4. **Autoriser l'agent de service Pub/Sub à émettre des jetons au nom de ce compte** :
+   ```bash
+   PROJECT_NUMBER=$(gcloud projects describe $PROJECT_ID --format='value(projectNumber)')
+   gcloud iam service-accounts add-iam-policy-binding \
+     pubsub-run-cycle-invoker@${PROJECT_ID}.iam.gserviceaccount.com \
+     --member="serviceAccount:service-${PROJECT_NUMBER}@gcp-sa-pubsub.iam.gserviceaccount.com" \
+     --role="roles/iam.serviceAccountTokenCreator"
+   ```
+
+5. **Créer le topic** :
+   ```bash
+   gcloud pubsub topics create feedback-cycle --project=$PROJECT_ID
+   ```
+
+6. **Créer la subscription push, avec l'audience OIDC** :
+   ```bash
+   SERVICE_URL=$(gcloud run services describe $SERVICE_NAME --region=$REGION --format='value(status.url)')
+
+   gcloud pubsub subscriptions create feedback-cycle-push \
+     --topic=feedback-cycle \
+     --push-endpoint="${SERVICE_URL}/api/agent/run-cycle" \
+     --push-auth-service-account="pubsub-run-cycle-invoker@${PROJECT_ID}.iam.gserviceaccount.com" \
+     --push-auth-token-audience="${SERVICE_URL}/api/agent/run-cycle" \
+     --project=$PROJECT_ID
+   ```
+
+7. **Renseigner les variables d'environnement du service Cloud Run** (en plus des existantes) :
+   ```
+   PUBSUB_PUSH_SERVICE_ACCOUNT=pubsub-run-cycle-invoker@<PROJECT_ID>.iam.gserviceaccount.com
+   RUN_CYCLE_AUDIENCE=<SERVICE_URL>/api/agent/run-cycle
+   ```
+
+8. **Créer le job Cloud Scheduler** (exemple : toutes les 6h) :
+   ```bash
+   gcloud scheduler jobs create pubsub feedback-cycle-scheduler \
+     --schedule="0 */6 * * *" \
+     --topic=feedback-cycle \
+     --message-body='{"project_id":"demo"}' \
+     --location=$REGION \
+     --time-zone="Europe/Paris" \
+     --project=$PROJECT_ID
+   ```
+   `message-body` devient le contenu du message Pub/Sub (encodé en base64 automatiquement) —
+   c'est exactement ce que `agent/main.py` attend de décoder pour retrouver `project_id`.
+
+**Rôles IAM nécessaires (résumé)**
+
+| Identité | Rôle | Sur quelle ressource | Pourquoi |
+|---|---|---|---|
+| SA `pubsub-run-cycle-invoker` | `roles/run.invoker` | Le service Cloud Run | Autorise Pub/Sub (via ce SA) à appeler l'endpoint |
+| Agent de service Pub/Sub (`service-<PROJECT_NUMBER>@gcp-sa-pubsub.iam.gserviceaccount.com`) | `roles/iam.serviceAccountTokenCreator` | Le SA `pubsub-run-cycle-invoker` | Autorise Pub/Sub à générer des jetons OIDC au nom de ce SA |
+| Agent de service Cloud Scheduler | `roles/pubsub.publisher` | Le topic `feedback-cycle` | Généralement accordé automatiquement par `gcloud scheduler jobs create pubsub` — à vérifier après coup (`gcloud pubsub topics get-iam-policy feedback-cycle`) |
+
+**Validation** : attendre la prochaine exécution planifiée (ou forcer avec
+`gcloud scheduler jobs run feedback-cycle-scheduler --location=$REGION`), puis vérifier dans les
+logs Cloud Run (`gcloud run services logs read $SERVICE_NAME --region=$REGION`) qu'un cycle
+s'est exécuté. Garder une capture pour la preuve GCP / la vidéo.
+
 ## Lancement local
 
 ```bash
@@ -106,3 +195,6 @@ Voir `.env.example` pour la liste complète. Résumé :
 | `MONGODB_URI` / `MONGODB_DB` | Base de données | Oui |
 | `GCP_PROJECT_ID` | Résolution de l'endpoint Gemma | Non — sans elle, fallback Gemini systématique |
 | `GEMMA_ENDPOINT_ID` / `GEMMA_LOCATION` | Endpoint Gemma déployé | Non — idem |
+| `GITHUB_TOKEN` / `GITHUB_REPO_MAP` | Création de tickets GitHub | Oui, pour `create_ticket` |
+| `RUN_CYCLE_SECRET` | Auth directe de `run-cycle` (tests/débogage) | Non |
+| `PUBSUB_PUSH_SERVICE_ACCOUNT` / `RUN_CYCLE_AUDIENCE` | Auth OIDC de `run-cycle` par Pub/Sub | Non — sans elles, seul `RUN_CYCLE_SECRET` fonctionne |
