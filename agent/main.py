@@ -7,6 +7,7 @@ import os
 import json
 import base64
 import logging
+from datetime import datetime, timezone
 
 from fastapi import FastAPI, HTTPException, BackgroundTasks, Header, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -25,7 +26,7 @@ from tools.ingest_feedback    import ingest_feedback
 from tools.cluster_feedback   import cluster_feedback
 from tools.generate_insights  import generate_insights
 from tools.create_ticket      import create_ticket
-from db                       import get_mongo_client
+from db                       import get_mongo_client, get_team_language, DEFAULT_TEAM_LANGUAGE
 
 logger = logging.getLogger("feedback_agent.main")
 
@@ -78,6 +79,9 @@ class ChatRequest(BaseModel):
     project_id: str
     message: str
     history: Optional[List[dict]] = []
+
+class ProjectSettingsRequest(BaseModel):
+    team_language: str  # "fr" | "en"
 
 # ── Routes ──────────────────────────────────────────────────────────────────
 
@@ -155,6 +159,33 @@ async def api_feedbacks(project_id: str, cluster_id: Optional[str] = None):
     for f in feedbacks:
         f["_id"] = str(f["_id"])
     return {"feedbacks": feedbacks}
+
+
+@app.get("/api/projects/{project_id}/settings")
+async def api_get_project_settings(project_id: str):
+    """Retourne les réglages d'un projet (aujourd'hui : team_language uniquement)."""
+    return {"project_id": project_id, "team_language": get_team_language(project_id)}
+
+
+@app.put("/api/projects/{project_id}/settings")
+async def api_update_project_settings(project_id: str, req: ProjectSettingsRequest):
+    """
+    Définit team_language ('fr' ou 'en') — la langue dans laquelle les artefacts destinés à
+    l'équipe (labels de cluster, insights, tickets, notifications) sont produits.
+    """
+    if req.team_language not in ("fr", "en"):
+        raise HTTPException(status_code=400, detail="team_language doit être 'fr' ou 'en'.")
+
+    db = get_mongo_client()
+    db.projects.update_one(
+        {"project_id": project_id},
+        {
+            "$set": {"team_language": req.team_language},
+            "$setOnInsert": {"project_id": project_id, "created_at": datetime.now(timezone.utc)},
+        },
+        upsert=True,
+    )
+    return {"project_id": project_id, "team_language": req.team_language}
 
 
 @app.post("/api/agent/chat")

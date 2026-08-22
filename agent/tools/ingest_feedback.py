@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 from google import genai
 from google.genai import types
 
-from db import get_mongo_client
+from db import get_mongo_client, DEFAULT_TEAM_LANGUAGE
 from config import MODEL_NAME, EMBEDDING_MODEL, EMBEDDING_DIMENSIONS
 from gemma_client import gemma_generate, GemmaUnavailableError
 
@@ -184,9 +184,21 @@ async def ingest_feedback(
     inserted_id = str(result.inserted_id)
 
     # Mise à jour des stats du projet
+    # NOTE : filtrer par {"project_id": project_id}, pas {"_id": project_id} — le _id Mongo
+    # est un ObjectId auto-généré, jamais égal à la chaîne project_id (ex. "demo"). L'ancien
+    # filtre par _id ne correspondait donc jamais à aucun document (bug silencieux découvert
+    # à l'étape 4.2, en implémentant team_language qui a besoin d'un lookup fiable par projet).
     db.projects.update_one(
-        {"_id": project_id},
-        {"$inc": {"feedback_count": 1}},
+        {"project_id": project_id},
+        {
+            "$inc": {"feedback_count": 1},
+            "$setOnInsert": {
+                "project_id": project_id,
+                "team_language": DEFAULT_TEAM_LANGUAGE,
+                "created_at": datetime.now(timezone.utc),
+            },
+        },
+        upsert=True,
     )
 
     return {

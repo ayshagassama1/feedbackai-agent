@@ -26,8 +26,10 @@ façon de créer un ticket sous ce seuil, mais évite l'appel inutile). create_t
 automatiquement l'équipe quand il crée un ticket ; n'appelle notify toi-même que pour d'autres
 événements explicitement demandés.
 
-Réponds toujours dans la langue de l'utilisateur (français ou anglais). Sois concis, actionnable
-et précis.
+Réponds toujours dans la langue de l'utilisateur (français ou anglais), quelle que soit la
+langue des feedbacks eux-mêmes. Les tickets, eux, sont toujours écrits dans la langue de
+l'équipe du projet (team_language) — create_ticket s'en charge automatiquement, tu n'as rien
+à faire de spécial pour ça. Sois concis, actionnable et précis.
 """
 
 root_agent = LlmAgent(

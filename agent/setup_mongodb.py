@@ -36,14 +36,19 @@ USERS_VALIDATOR = {
 PROJECTS_VALIDATOR = {
     "$jsonSchema": {
         "bsonType": "object",
-        "required": ["user_id", "name", "widget_key", "created_at"],
+        # Clé applicative : project_id (chaîne libre, ex. "demo"), pas l'_id Mongo. Le modèle
+        # multi-tenant (user_id/widget_key) est un vestige hors périmètre hackathon (SPECS §14,
+        # Décisions de cadrage) : champs gardés optionnels pour compat, jamais requis.
+        "required": ["project_id", "created_at"],
         "properties": {
-            "user_id":        {"bsonType": "string",  "description": "Référence à users._id"},
-            "name":           {"bsonType": "string",  "description": "Nom du projet SaaS"},
-            "widget_key":     {"bsonType": "string",  "description": "Clé publique pour le widget embeddable"},
-            "url":            {"bsonType": "string",  "description": "URL du produit (optionnel)"},
+            "project_id":     {"bsonType": "string",  "description": "Identifiant applicatif du projet"},
+            "team_language":  {"bsonType": "string",  "enum": ["fr", "en"], "description": "Langue des artefacts destinés à l'équipe (étape 4.2)"},
             "feedback_count": {"bsonType": "int",     "description": "Compteur dénormalisé"},
             "created_at":     {"bsonType": "date"},
+            "user_id":        {"bsonType": "string",  "description": "Hérité, non utilisé"},
+            "name":           {"bsonType": "string",  "description": "Hérité, non utilisé"},
+            "widget_key":     {"bsonType": "string",  "description": "Hérité, non utilisé"},
+            "url":            {"bsonType": "string",  "description": "Hérité, non utilisé"},
         },
     }
 }

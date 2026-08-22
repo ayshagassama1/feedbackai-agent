@@ -10,7 +10,7 @@ from datetime import datetime, timezone, timedelta
 from google import genai
 from google.genai import types
 
-from db import get_mongo_client
+from db import get_mongo_client, get_team_language
 from config import MODEL_NAME
 
 _client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
@@ -39,6 +39,8 @@ async def generate_insights(project_id: str) -> dict:
     db = get_mongo_client()
     now = datetime.now(timezone.utc)
     week_ago = now - timedelta(days=7)
+    team_language = get_team_language(project_id)
+    language_name = "français" if team_language == "fr" else "English"
 
     # ── Stats de base ────────────────────────────────────────────────────────
     total       = db.feedbacks.count_documents({"project_id": project_id})
@@ -77,7 +79,7 @@ async def generate_insights(project_id: str) -> dict:
             "category":    cat["_id"],
             "count":       cat["count"],
             "priority":    priority,
-            "label":       _category_label(cat["_id"]),
+            "label":       _category_label(cat["_id"], team_language),
             "sample":      samples[0] if samples else "",
             "avg_sentiment": round(cat["avg_sentiment"], 2),
         })
@@ -107,7 +109,8 @@ Clusters principaux :
 Top catégories :
 {chr(10).join(f"- {i['category']}: {i['count']} feedbacks" for i in top_issues)}
 
-Génère exactement 3 recommandations actionnables pour cette semaine.
+Génère exactement 3 recommandations actionnables pour cette semaine, rédigées en {language_name}
+(quelle que soit la langue des feedbacks d'origine).
 """
 
     rec_response = await _client.aio.models.generate_content(
@@ -142,12 +145,21 @@ Génère exactement 3 recommandations actionnables pour cette semaine.
     return insight_doc
 
 
-def _category_label(category: str) -> str:
+def _category_label(category: str, team_language: str) -> str:
     labels = {
-        "bug":             "Bugs signalés",
-        "feature_request": "Fonctionnalités demandées",
-        "ux":              "Problèmes d'expérience utilisateur",
-        "pricing":         "Retours sur les prix",
-        "other":           "Autres retours",
+        "fr": {
+            "bug":             "Bugs signalés",
+            "feature_request": "Fonctionnalités demandées",
+            "ux":              "Problèmes d'expérience utilisateur",
+            "pricing":         "Retours sur les prix",
+            "other":           "Autres retours",
+        },
+        "en": {
+            "bug":             "Reported bugs",
+            "feature_request": "Requested features",
+            "ux":              "User experience issues",
+            "pricing":         "Pricing feedback",
+            "other":           "Other feedback",
+        },
     }
-    return labels.get(category, category)
+    return labels.get(team_language, labels["fr"]).get(category, category)

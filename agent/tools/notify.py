@@ -1,8 +1,8 @@
 """
 Tool : notify
-Notification simple (log structuré) — pas de dépendance externe pour la démo. Message
-bilingue FR/EN. Un webhook Slack entrant peut remplacer ce log plus tard sans changer la
-signature du tool (voir README).
+Notification simple (log structuré) — pas de dépendance externe pour la démo. Le message est
+produit dans la langue de l'équipe (team_language) par l'appelant. Un webhook Slack entrant
+peut remplacer ce log plus tard sans changer la signature du tool (voir README).
 """
 
 import logging
@@ -10,17 +10,17 @@ import logging
 logger = logging.getLogger("feedback_agent.notify")
 
 
-async def notify(project_id: str, message_fr: str, message_en: str) -> dict:
+async def notify(project_id: str, message: str, language: str) -> dict:
     """
-    Notifie l'équipe d'un événement (ex. nouveau ticket créé). Message bilingue FR/EN.
+    Notifie l'équipe d'un événement (ex. nouveau ticket créé).
 
     Args:
         project_id : identifiant du projet concerné
-        message_fr : message en français
-        message_en : message en anglais
+        message    : message déjà rédigé dans la langue de l'équipe
+        language   : langue du message ('fr' ou 'en'), pour traçabilité dans les logs
 
     Returns:
         dict confirmant l'envoi
     """
-    logger.info("[NOTIFY] project=%s | FR: %s | EN: %s", project_id, message_fr, message_en)
-    return {"sent": True, "channel": "log", "message_fr": message_fr, "message_en": message_en}
+    logger.info("[NOTIFY] project=%s language=%s message=%s", project_id, language, message)
+    return {"sent": True, "channel": "log", "message": message, "language": language}

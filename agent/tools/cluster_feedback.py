@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from google import genai
 from google.genai import types
 
-from db import get_mongo_client
+from db import get_mongo_client, get_team_language
 from config import MODEL_NAME
 
 _client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
@@ -56,6 +56,9 @@ async def cluster_feedback(project_id: str) -> dict:
     if len(feedbacks) < MIN_CLUSTER_SIZE:
         return {"clusters_updated": 0, "message": "Pas assez de feedbacks pour clusteriser."}
 
+    team_language = get_team_language(project_id)
+    language_name = "français" if team_language == "fr" else "English"
+
     # Algorithme de clustering simple (greedy nearest-centroid)
     clusters: list[dict] = []
 
@@ -90,8 +93,9 @@ async def cluster_feedback(project_id: str) -> dict:
         avg_sentiment = float(np.mean([m.get("sentiment", 0) for m in cluster["members"]]))
 
         label_prompt = f"""
-Ces feedbacks parlent tous du même sujet. Génère un label court (3-6 mots max) en français
-qui résume le thème commun, sans ponctuation finale.
+Ces feedbacks parlent tous du même sujet. Génère un label court (3-6 mots max) en {language_name}
+qui résume le thème commun, sans ponctuation finale. Les feedbacks eux-mêmes peuvent être dans
+n'importe quelle langue — le label doit être en {language_name} quoi qu'il arrive.
 
 Feedbacks :
 {chr(10).join(f'- {t}' for t in sample_texts)}

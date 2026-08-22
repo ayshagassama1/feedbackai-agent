@@ -12,7 +12,7 @@ from bson import ObjectId
 from google import genai
 from google.genai import types
 
-from db import get_mongo_client
+from db import get_mongo_client, get_team_language
 from config import MODEL_NAME, TICKET_MIN_FEEDBACK_COUNT, TICKET_SENTIMENT_THRESHOLD
 from tools.notify import notify
 
@@ -35,12 +35,14 @@ Cluster de feedback : "{label}"
 Nombre de feedbacks : {feedback_count}
 Sentiment moyen : {avg_sentiment:.2f} (entre -1 très négatif et +1 très positif)
 
-Feedbacks représentatifs :
+Feedbacks représentatifs (dans leur langue d'origine) :
 {samples}
 
-Rédige un ticket structuré en markdown avec ces sections : Contexte, Feedbacks représentatifs
-(citer 2-3 extraits), Impact, Proposition d'action. Le titre doit être court et actionnable
-(pas de préfixe type "Bug:" ou "[FR]").
+Rédige un ticket structuré en markdown, entièrement en {language_name} (titre, sections,
+narration), avec ces sections : Contexte, Feedbacks représentatifs, Impact, Proposition d'action.
+Dans la section Feedbacks représentatifs, cite 2-3 extraits **mot pour mot, dans leur langue
+d'origine, sans les traduire** — seule la narration autour (Contexte, Impact, Proposition) est
+en {language_name}. Le titre doit être court et actionnable (pas de préfixe type "Bug:" ou "[FR]").
 """
 
 
@@ -99,11 +101,15 @@ async def create_ticket(project_id: str, cluster_id: str) -> dict:
     )
     samples_text = "\n".join(f"- {s['text']}" for s in samples) or "(aucun extrait disponible)"
 
+    team_language = get_team_language(project_id)
+    language_name = "français" if team_language == "fr" else "English"
+
     prompt = TICKET_PROMPT_TEMPLATE.format(
         label=cluster["label"],
         feedback_count=cluster["feedback_count"],
         avg_sentiment=cluster.get("avg_sentiment", 0.0),
         samples=samples_text,
+        language_name=language_name,
     )
 
     response = await _client.aio.models.generate_content(
@@ -140,16 +146,17 @@ async def create_ticket(project_id: str, cluster_id: str) -> dict:
         {"$set": {"issue_url": issue_url, "issue_number": issue_number}},
     )
 
-    await notify(
-        project_id=project_id,
-        message_fr=(
-            f"Nouveau ticket créé pour le cluster « {cluster['label']} » "
-            f"({feedback_count} feedbacks, sentiment moyen {avg_sentiment:.2f}) : {issue_url}"
-        ),
-        message_en=(
+    if team_language == "en":
+        message = (
             f'New ticket created for cluster "{cluster["label"]}" '
             f"({feedback_count} feedbacks, avg sentiment {avg_sentiment:.2f}): {issue_url}"
-        ),
-    )
+        )
+    else:
+        message = (
+            f"Nouveau ticket créé pour le cluster « {cluster['label']} » "
+            f"({feedback_count} feedbacks, sentiment moyen {avg_sentiment:.2f}) : {issue_url}"
+        )
+
+    await notify(project_id=project_id, message=message, language=team_language)
 
     return {"issue_url": issue_url, "issue_number": issue_number, "created": True}

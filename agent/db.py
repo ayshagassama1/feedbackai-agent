@@ -22,3 +22,16 @@ def get_mongo_client():
     """Retourne la base de données MongoDB (singleton)."""
     client = MongoClient(MONGODB_URI, server_api=ServerApi("1"))
     return client[DB_NAME]
+
+
+DEFAULT_TEAM_LANGUAGE = "fr"
+
+
+def get_team_language(project_id: str) -> str:
+    """
+    Langue des artefacts destinés à l'équipe (labels, insights, tickets, notifications)
+    pour un projet — 'fr' ou 'en'. 'fr' par défaut si le projet n'a jamais été configuré.
+    """
+    db = get_mongo_client()
+    proj = db.projects.find_one({"project_id": project_id}, {"team_language": 1})
+    return (proj or {}).get("team_language", DEFAULT_TEAM_LANGUAGE)
