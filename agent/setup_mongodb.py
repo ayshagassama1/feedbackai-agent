@@ -135,8 +135,15 @@ def create_indexes(db):
     db.users.create_index("email", unique=True, name="idx_users_email")
 
     # projects
-    db.projects.create_index([("user_id", ASCENDING)], name="idx_projects_user")
-    db.projects.create_index("widget_key", unique=True, name="idx_projects_widget_key")
+    # idx_projects_project_id : la vraie clé applicative (project_id), utilisée partout dans le
+    # code depuis l'étape 4.2. idx_projects_user/idx_projects_widget_key : vestiges de l'ancien
+    # modèle multi-tenant, hors périmètre — gardés en sparse pour ne jamais bloquer un upsert
+    # par project_id qui ne renseigne pas ces champs (bug réel rencontré à l'étape 5.1 : un index
+    # unique non-sparse sur un champ absent traite "absent" comme null, et refuse plus d'un
+    # document sans ce champ).
+    db.projects.create_index("project_id", unique=True, name="idx_projects_project_id")
+    db.projects.create_index([("user_id", ASCENDING)], sparse=True, name="idx_projects_user")
+    db.projects.create_index("widget_key", unique=True, sparse=True, name="idx_projects_widget_key")
 
     # feedbacks
     db.feedbacks.create_index(

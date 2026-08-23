@@ -9,7 +9,7 @@ import base64
 import logging
 from datetime import datetime, timezone
 
-from fastapi import FastAPI, HTTPException, BackgroundTasks, Header, Request
+from fastapi import FastAPI, HTTPException, BackgroundTasks, Header, Request, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional, List
@@ -62,9 +62,17 @@ _runner = Runner(agent=root_agent, app_name=APP_NAME, session_service=_session_s
 # ── FastAPI app ─────────────────────────────────────────────────────────────
 app = FastAPI(title="Feedback Agent API")
 
+# Resserré sur l'origine réelle du frontend déployé (étape 5.1) — plus de wildcard "*".
+# FRONTEND_ORIGINS : liste d'origines séparées par des virgules.
+FRONTEND_ORIGINS = [
+    origin.strip()
+    for origin in os.environ.get("FRONTEND_ORIGINS", "http://localhost:5173").split(",")
+    if origin.strip()
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=FRONTEND_ORIGINS,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -100,22 +108,32 @@ async def api_ingest(req: IngestTextRequest, background_tasks: BackgroundTasks):
     return {"status": "queued", "project_id": req.project_id}
 
 
-@app.post("/api/ingest/csv")
-async def api_ingest_csv(project_id: str, file: bytes):
-    """Ingère un fichier CSV de feedbacks."""
+async def _ingest_csv_background(project_id: str, content: bytes) -> None:
+    """Ingère chaque ligne valide d'un CSV en tâche de fond."""
     import csv, io
-    reader = csv.DictReader(io.StringIO(file.decode("utf-8")))
-    results = []
-    for row in reader:
-        text = row.get("text") or row.get("feedback") or row.get("content") or ""
-        if text.strip():
-            r = await ingest_feedback(
-                project_id=project_id,
-                source="csv",
-                content=text.strip(),
-            )
-            results.append(r)
-    return {"ingested": len(results), "results": results}
+    try:
+        reader = csv.DictReader(io.StringIO(content.decode("utf-8")))
+        ingested = 0
+        for row in reader:
+            text = row.get("text") or row.get("feedback") or row.get("content") or ""
+            if text.strip():
+                await ingest_feedback(project_id=project_id, source="csv", content=text.strip())
+                ingested += 1
+        logger.info("Ingestion CSV terminée (project=%s) : %d ligne(s) ingérée(s).", project_id, ingested)
+    except Exception as e:
+        logger.error("Échec de l'ingestion CSV en tâche de fond (project=%s) : %s", project_id, e)
+
+
+@app.post("/api/ingest/csv", status_code=202)
+async def api_ingest_csv(
+    background_tasks: BackgroundTasks,
+    project_id: str = Form(...),
+    file: UploadFile = File(...),
+):
+    """Accepte un fichier CSV de feedbacks et l'ingère en tâche de fond (réponse immédiate)."""
+    content = await file.read()
+    background_tasks.add_task(_ingest_csv_background, project_id, content)
+    return {"status": "queued", "project_id": project_id}
 
 
 @app.get("/api/insights")

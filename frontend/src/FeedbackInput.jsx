@@ -54,7 +54,6 @@ export default function FeedbackInput({ projectId, onSuccess }) {
         body = new FormData();
         body.append("file", file);
         body.append("project_id", projectId);
-        body.append("source", "csv");
       } else {
         headers["Content-Type"] = "application/json";
         body = JSON.stringify({
@@ -64,7 +63,8 @@ export default function FeedbackInput({ projectId, onSuccess }) {
         });
       }
 
-      const res = await fetch(`${API_URL}/api/ingest`, {
+      const endpoint = mode === "csv" ? `${API_URL}/api/ingest/csv` : `${API_URL}/api/ingest`;
+      const res = await fetch(endpoint, {
         method: "POST",
         headers,
         body,

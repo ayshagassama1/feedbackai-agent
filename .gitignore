@@ -3,3 +3,4 @@
 *__pycache__/
 *node_modules/
 dist/
+[A-Z]*_[A-Z]*.md

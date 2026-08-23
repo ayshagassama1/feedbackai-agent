@@ -23,7 +23,7 @@ steps:
       - --allow-unauthenticated
       - --memory=1Gi
       - --cpu=1
-      - --set-env-vars=GCP_PROJECT_ID=$PROJECT_ID,MONGODB_DB=feedbackai,GEMMA_LOCATION=${_GEMMA_LOCATION},GEMMA_ENDPOINT_ID=${_GEMMA_ENDPOINT_ID}
+      - --set-env-vars=GCP_PROJECT_ID=$PROJECT_ID,MONGODB_DB=feedbackai,GEMMA_LOCATION=${_GEMMA_LOCATION},GEMMA_ENDPOINT_ID=${_GEMMA_ENDPOINT_ID},FRONTEND_ORIGINS=${_FRONTEND_ORIGIN}
       - --set-secrets=GEMINI_API_KEY=gemini-api-key:latest,MONGODB_URI=mongodb-uri:latest,GITHUB_TOKEN=github-token:latest,GITHUB_REPO_MAP=github-repo-map:latest,RUN_CYCLE_SECRET=run-cycle-secret:latest
 
 images:
@@ -36,3 +36,6 @@ substitutions:
   #     --update-env-vars=GEMMA_ENDPOINT_ID=<id>
   _GEMMA_LOCATION: "us-central1"
   _GEMMA_ENDPOINT_ID: ""
+  # À écraser au submit avec l'URL réelle du frontend déployé, ex. :
+  #   --substitutions=_FRONTEND_ORIGIN=https://feedback-agent-frontend-xxxx.run.app
+  _FRONTEND_ORIGIN: "http://localhost:5173"
