@@ -1,0 +1,21 @@
+/*
+ * Élévation au survol — complète theme.js (les styles inline React ne gèrent pas :hover).
+ * Reproduit le motif d'oryel.dev : shadow-sm au repos, shadow-lg teinté teal + léger
+ * soulèvement au survol. Rien d'autre : pas de dégradé, pas de glassmorphism.
+ */
+
+.card-elevate {
+  transition: box-shadow 0.2s ease, transform 0.2s ease, border-color 0.2s ease;
+}
+.card-elevate:hover {
+  box-shadow: 0 10px 15px -3px rgba(13, 148, 136, 0.18), 0 4px 6px -4px rgba(13, 148, 136, 0.12);
+  transform: translateY(-2px);
+}
+
+.btn-elevate {
+  transition: box-shadow 0.2s ease, transform 0.15s ease, background-color 0.15s ease;
+}
+.btn-elevate:hover:not(:disabled) {
+  box-shadow: 0 10px 15px -3px rgba(13, 148, 136, 0.22), 0 4px 6px -4px rgba(13, 148, 136, 0.15);
+  transform: translateY(-1px);
+}

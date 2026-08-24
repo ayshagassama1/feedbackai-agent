@@ -1,19 +1,17 @@
 import { useState, useRef } from "react";
+import { theme } from "./theme";
+import { translations } from "./i18n";
 
 const API_URL = import.meta.env.VITE_API_URL ?? "";
 
-const MODES = [
-  { id: "text", label: "Texte libre", icon: "✏️" },
-  { id: "csv",  label: "CSV",         icon: "📄" },
-  { id: "url",  label: "URL",         icon: "🔗" },
-];
+export default function FeedbackInput({ projectId, lang, onSuccess }) {
+  const t = translations[lang];
+  const MODES = [
+    { id: "text", label: t.feedbackInput.modeText },
+    { id: "csv",  label: t.feedbackInput.modeCsv },
+    { id: "url",  label: t.feedbackInput.modeUrl },
+  ];
 
-const SOURCES = {
-  text: { placeholder: "Colle ici un feedback brut, un avis client, une note de support…", rows: 6 },
-  url:  { placeholder: "https://www.g2.com/products/… ou lien App Store / Play Store" },
-};
-
-export default function FeedbackInput({ projectId, onSuccess }) {
   const [mode, setMode]           = useState("text");
   const [value, setValue]         = useState("");
   const [file, setFile]           = useState(null);
@@ -22,7 +20,7 @@ export default function FeedbackInput({ projectId, onSuccess }) {
   const [preview, setPreview]     = useState(null);   // {rows, columns} for CSV
   const fileRef                   = useRef(null);
 
-  /* ── CSV preview ── */
+  /* Prévisualisation CSV */
   const handleFile = (e) => {
     const f = e.target.files?.[0];
     if (!f) return;
@@ -36,7 +34,7 @@ export default function FeedbackInput({ projectId, onSuccess }) {
     reader.readAsText(f);
   };
 
-  /* ── Submit ── */
+  /* Envoi */
   const handleSubmit = async () => {
     if (status === "loading") return;
     if (mode === "text" && !value.trim()) return;
@@ -72,7 +70,7 @@ export default function FeedbackInput({ projectId, onSuccess }) {
 
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
-        throw new Error(err.detail ?? `Erreur ${res.status}`);
+        throw new Error(err.detail ?? `${res.status}`);
       }
 
       const data = await res.json();
@@ -89,7 +87,7 @@ export default function FeedbackInput({ projectId, onSuccess }) {
     }
   };
 
-  /* ── Reset ── */
+  /* Réinitialisation */
   const reset = () => {
     setStatus("idle");
     setErrorMsg("");
@@ -106,15 +104,13 @@ export default function FeedbackInput({ projectId, onSuccess }) {
      (mode === "csv"  && file));
 
   return (
-    <div style={styles.card}>
+    <div className="card-elevate" style={styles.card}>
 
-      {/* ── Header ── */}
       <div style={styles.header}>
-        <span style={styles.title}>Nouveau feedback</span>
-        <span style={styles.subtitle}>Analysé par l'agent en quelques secondes</span>
+        <span style={styles.title}>{t.feedbackInput.title}</span>
+        <span style={styles.subtitle}>{t.feedbackInput.subtitle}</span>
       </div>
 
-      {/* ── Mode tabs ── */}
       <div style={styles.tabs}>
         {MODES.map((m) => (
           <button
@@ -122,40 +118,35 @@ export default function FeedbackInput({ projectId, onSuccess }) {
             onClick={() => { setMode(m.id); reset(); }}
             style={{ ...styles.tab, ...(mode === m.id ? styles.tabActive : {}) }}
           >
-            <span style={styles.tabIcon}>{m.icon}</span>
             {m.label}
           </button>
         ))}
       </div>
 
-      {/* ── Input area ── */}
       <div style={styles.inputArea}>
 
-        {/* Text */}
         {mode === "text" && (
           <textarea
             value={value}
             onChange={(e) => setValue(e.target.value)}
-            placeholder={SOURCES.text.placeholder}
-            rows={SOURCES.text.rows}
+            placeholder={t.feedbackInput.placeholderText}
+            rows={6}
             style={styles.textarea}
             disabled={status === "loading"}
           />
         )}
 
-        {/* URL */}
         {mode === "url" && (
           <input
             type="url"
             value={value}
             onChange={(e) => setValue(e.target.value)}
-            placeholder={SOURCES.url.placeholder}
+            placeholder={t.feedbackInput.placeholderUrl}
             style={styles.input}
             disabled={status === "loading"}
           />
         )}
 
-        {/* CSV */}
         {mode === "csv" && (
           <div>
             <div
@@ -173,16 +164,14 @@ export default function FeedbackInput({ projectId, onSuccess }) {
             >
               {!file ? (
                 <>
-                  <span style={styles.dropIcon}>📂</span>
-                  <span style={styles.dropLabel}>Glisse ton fichier CSV ici</span>
-                  <span style={styles.dropHint}>ou clique pour parcourir</span>
+                  <span style={styles.dropLabel}>{t.feedbackInput.dropCsv}</span>
+                  <span style={styles.dropHint}>{t.feedbackInput.orBrowse}</span>
                 </>
               ) : (
                 <>
-                  <span style={styles.dropIcon}>✅</span>
                   <span style={styles.dropLabel}>{file.name}</span>
                   <span style={styles.dropHint}>
-                    {(file.size / 1024).toFixed(1)} Ko
+                    {(file.size / 1024).toFixed(1)} KB
                   </span>
                 </>
               )}
@@ -195,11 +184,10 @@ export default function FeedbackInput({ projectId, onSuccess }) {
               onChange={handleFile}
             />
 
-            {/* CSV preview */}
             {preview && (
               <div style={styles.preview}>
                 <span style={styles.previewLabel}>
-                  Aperçu · {preview.rows} lignes · {preview.columns} colonnes
+                  {t.feedbackInput.preview} · {preview.rows} {t.feedbackInput.rows} · {preview.columns} {t.feedbackInput.columns}
                 </span>
                 <div style={styles.previewRows}>
                   {preview.sample.map((row, i) => (
@@ -218,22 +206,19 @@ export default function FeedbackInput({ projectId, onSuccess }) {
         )}
       </div>
 
-      {/* ── Error ── */}
       {status === "error" && (
         <div style={styles.errorBanner}>
-          <span> {errorMsg}</span>
-          <button onClick={reset} style={styles.errorClose}>✕</button>
+          <span>{t.feedbackInput.error}: {errorMsg}</span>
+          <button onClick={reset} style={styles.errorClose}>×</button>
         </div>
       )}
 
-      {/* ── Footer ── */}
       <div style={styles.footer}>
         {status === "success" ? (
-          <div style={styles.successMsg}>
-            <span> Feedback ingéré — l'agent analyse en cours…</span>
-          </div>
+          <div style={styles.successMsg}>{t.feedbackInput.success}</div>
         ) : (
           <button
+            className="btn-elevate"
             onClick={handleSubmit}
             disabled={!canSubmit}
             style={{
@@ -241,112 +226,85 @@ export default function FeedbackInput({ projectId, onSuccess }) {
               ...(canSubmit ? styles.btnActive : styles.btnDisabled),
             }}
           >
-            {status === "loading" ? (
-              <span style={styles.spinner}>⏳ Analyse en cours…</span>
-            ) : (
-              "Envoyer à l'agent →"
-            )}
+            {status === "loading" ? t.feedbackInput.submitting : t.feedbackInput.submit}
           </button>
         )}
 
         <span style={styles.hint}>
-          {mode === "text" && "Texte libre, e-mail client, transcript de support…"}
-          {mode === "csv"  && "Colonnes attendues : text, source, date (optionnels)"}
-          {mode === "url"  && "G2, Trustpilot, App Store, Play Store supportés"}
+          {mode === "text" && t.feedbackInput.hintText}
+          {mode === "csv"  && t.feedbackInput.hintCsv}
+          {mode === "url"  && t.feedbackInput.hintUrl}
         </span>
       </div>
     </div>
   );
 }
 
-/* ── Styles ── */
+/* Styles */
 const styles = {
   card: {
-    background: "var(--color-background-primary, #fff)",
-    border: "1px solid var(--color-border-tertiary, #e5e5e5)",
-    borderRadius: 16,
-    padding: "24px",
+    background: theme.color.bgPrimary,
+    border: `1px solid ${theme.color.borderTertiary}`,
+    borderRadius: theme.radius.lg + 6,
+    boxShadow: theme.shadow.sm,
+    padding: 24,
     maxWidth: 560,
-    fontFamily: "var(--font-sans, system-ui)",
+    fontFamily: theme.font.sans,
     display: "flex",
     flexDirection: "column",
     gap: 20,
   },
-  header: {
-    display: "flex",
-    flexDirection: "column",
-    gap: 4,
-  },
-  title: {
-    fontSize: 18,
-    fontWeight: 600,
-    color: "var(--color-text-primary, #111)",
-  },
-  subtitle: {
-    fontSize: 13,
-    color: "var(--color-text-tertiary, #888)",
-  },
-  tabs: {
-    display: "flex",
-    gap: 8,
-  },
+  header: { display: "flex", flexDirection: "column", gap: 4 },
+  title: { fontSize: 18, fontWeight: 600, color: theme.color.textPrimary, letterSpacing: "-0.01em" },
+  subtitle: { fontSize: 13, color: theme.color.textTertiary },
+  tabs: { display: "flex", gap: 8 },
   tab: {
-    display: "flex",
-    alignItems: "center",
-    gap: 6,
     padding: "7px 14px",
-    borderRadius: 8,
-    border: "1px solid var(--color-border-tertiary, #e5e5e5)",
+    borderRadius: theme.radius.md,
+    border: `1px solid ${theme.color.borderTertiary}`,
     background: "transparent",
     fontSize: 13,
     fontWeight: 500,
-    color: "var(--color-text-secondary, #555)",
+    color: theme.color.textSecondary,
     cursor: "pointer",
+    fontFamily: "inherit",
     transition: "all .15s",
   },
   tabActive: {
-    background: "var(--color-background-secondary, #f5f5f5)",
-    borderColor: "var(--color-border-primary, #ccc)",
-    color: "var(--color-text-primary, #111)",
+    background: theme.color.brandLight,
+    borderColor: theme.color.brandBorder,
+    color: theme.color.brandHover,
   },
-  tabIcon: {
-    fontSize: 14,
-  },
-  inputArea: {
-    display: "flex",
-    flexDirection: "column",
-    gap: 12,
-  },
+  inputArea: { display: "flex", flexDirection: "column", gap: 12 },
   textarea: {
     width: "100%",
     padding: "12px 14px",
-    borderRadius: 10,
-    border: "1px solid var(--color-border-tertiary, #e5e5e5)",
+    borderRadius: theme.radius.md,
+    border: `1px solid ${theme.color.borderTertiary}`,
     fontSize: 14,
     lineHeight: 1.6,
-    color: "var(--color-text-primary, #111)",
-    background: "var(--color-background-secondary, #fafafa)",
+    color: theme.color.textPrimary,
+    background: theme.color.bgSecondary,
     resize: "vertical",
     outline: "none",
     boxSizing: "border-box",
     fontFamily: "inherit",
-    transition: "border-color .15s",
   },
   input: {
     width: "100%",
     padding: "12px 14px",
-    borderRadius: 10,
-    border: "1px solid var(--color-border-tertiary, #e5e5e5)",
+    borderRadius: theme.radius.md,
+    border: `1px solid ${theme.color.borderTertiary}`,
     fontSize: 14,
-    color: "var(--color-text-primary, #111)",
-    background: "var(--color-background-secondary, #fafafa)",
+    color: theme.color.textPrimary,
+    background: theme.color.bgSecondary,
     outline: "none",
     boxSizing: "border-box",
     fontFamily: "inherit",
   },
   dropzone: {
-    border: "2px dashed var(--color-border-secondary, #ccc)",
-    borderRadius: 12,
+    border: `2px dashed ${theme.color.borderSecondary}`,
+    borderRadius: theme.radius.lg,
     padding: "32px 20px",
     display: "flex",
     flexDirection: "column",
@@ -357,23 +315,15 @@ const styles = {
   },
   dropzoneFilled: {
     borderStyle: "solid",
-    borderColor: "var(--color-border-primary, #aaa)",
-    background: "var(--color-background-secondary, #fafafa)",
+    borderColor: theme.color.brand,
+    background: theme.color.brandLight,
   },
-  dropIcon: { fontSize: 28 },
-  dropLabel: {
-    fontSize: 14,
-    fontWeight: 500,
-    color: "var(--color-text-primary, #111)",
-  },
-  dropHint: {
-    fontSize: 12,
-    color: "var(--color-text-tertiary, #888)",
-  },
+  dropLabel: { fontSize: 14, fontWeight: 500, color: theme.color.textPrimary },
+  dropHint: { fontSize: 12, color: theme.color.textTertiary },
   preview: {
     marginTop: 12,
-    borderRadius: 8,
-    border: "1px solid var(--color-border-tertiary, #e5e5e5)",
+    borderRadius: theme.radius.md,
+    border: `1px solid ${theme.color.borderTertiary}`,
     overflow: "hidden",
   },
   previewLabel: {
@@ -381,91 +331,57 @@ const styles = {
     padding: "6px 12px",
     fontSize: 11,
     fontWeight: 500,
-    color: "var(--color-text-secondary, #555)",
-    background: "var(--color-background-secondary, #fafafa)",
-    borderBottom: "1px solid var(--color-border-tertiary, #e5e5e5)",
+    color: theme.color.textSecondary,
+    background: theme.color.bgSecondary,
+    borderBottom: `1px solid ${theme.color.borderTertiary}`,
     letterSpacing: "0.04em",
     textTransform: "uppercase",
   },
-  previewRows: {
-    padding: "8px 12px",
-    display: "flex",
-    flexDirection: "column",
-    gap: 4,
-  },
-  previewRow: {
-    display: "flex",
-    gap: 8,
-  },
+  previewRows: { padding: "8px 12px", display: "flex", flexDirection: "column", gap: 4 },
+  previewRow: { display: "flex", gap: 8 },
   previewCell: {
     fontSize: 12,
-    color: "var(--color-text-secondary, #555)",
-    background: "var(--color-background-tertiary, #f0f0f0)",
+    color: theme.color.textSecondary,
+    background: theme.color.bgTertiary,
     padding: "2px 8px",
-    borderRadius: 4,
+    borderRadius: theme.radius.sm,
     whiteSpace: "nowrap",
     overflow: "hidden",
     textOverflow: "ellipsis",
     maxWidth: 160,
   },
-  footer: {
-    display: "flex",
-    flexDirection: "column",
-    gap: 8,
-  },
+  footer: { display: "flex", flexDirection: "column", gap: 8 },
   btn: {
     padding: "11px 20px",
-    borderRadius: 10,
+    borderRadius: theme.radius.md,
     border: "none",
     fontSize: 14,
     fontWeight: 600,
     cursor: "pointer",
-    transition: "all .15s",
+    transition: "background .15s",
     fontFamily: "inherit",
   },
-  btnActive: {
-    background: "var(--color-text-primary, #111)",
-    color: "var(--color-background-primary, #fff)",
-  },
-  btnDisabled: {
-    background: "var(--color-background-secondary, #f0f0f0)",
-    color: "var(--color-text-tertiary, #aaa)",
-    cursor: "not-allowed",
-  },
-  hint: {
-    fontSize: 12,
-    color: "var(--color-text-tertiary, #888)",
-  },
+  btnActive: { background: theme.color.brand, color: theme.color.textOnBrand },
+  btnDisabled: { background: theme.color.bgTertiary, color: theme.color.textTertiary, cursor: "not-allowed" },
+  hint: { fontSize: 12, color: theme.color.textTertiary },
   errorBanner: {
     display: "flex",
     alignItems: "center",
     justifyContent: "space-between",
     padding: "10px 14px",
-    borderRadius: 8,
-    background: "var(--color-background-danger, #fef2f2)",
-    border: "1px solid var(--color-border-danger, #fca5a5)",
+    borderRadius: theme.radius.md,
+    background: theme.color.dangerBg,
+    border: `1px solid ${theme.color.dangerBorder}`,
     fontSize: 13,
-    color: "var(--color-text-danger, #b91c1c)",
+    color: theme.color.danger,
   },
-  errorClose: {
-    background: "none",
-    border: "none",
-    cursor: "pointer",
-    fontSize: 13,
-    color: "var(--color-text-danger, #b91c1c)",
-    padding: 0,
-  },
+  errorClose: { background: "none", border: "none", cursor: "pointer", fontSize: 16, color: theme.color.danger, padding: 0, lineHeight: 1 },
   successMsg: {
     padding: "10px 14px",
-    borderRadius: 8,
-    background: "var(--color-background-success, #f0fdf4)",
-    border: "1px solid var(--color-border-success, #86efac)",
+    borderRadius: theme.radius.md,
+    background: theme.color.brandLight,
+    border: `1px solid ${theme.color.brandBorder}`,
     fontSize: 13,
-    color: "var(--color-text-success, #15803d)",
-  },
-  spinner: {
-    display: "inline-flex",
-    alignItems: "center",
-    gap: 6,
+    color: theme.color.brandHover,
   },
 };
