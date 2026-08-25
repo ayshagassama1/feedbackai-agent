@@ -4,6 +4,21 @@ Agent d'analyse de feedback produit pour équipes SaaS early-stage — ingestion
 clustering, insights, et action sur un tracker externe. Construit pour le hackathon
 *All Things Agentic* (Devpost / Google Cloud).
 
+**Les projets et feedbacks de démonstration (`project_id="demo"`, données insérées par
+`setup_mongodb.py`) sont fictifs**, générés pour illustrer le pipeline — aucune donnée
+utilisateur réelle.
+
+## Prérequis
+
+| Outil | Version | Usage |
+|---|---|---|
+| Python | 3.11+ | Backend (`agent/`) |
+| Node.js | 20+ | Frontend (`frontend/`) |
+| gcloud CLI | récent, authentifié (`gcloud auth login`) | Déploiement Cloud Run / Vertex AI |
+| Compte MongoDB Atlas | cluster actif | Base de données + Vector Search |
+| Token GitHub | portée `issues` minimale | Action externe de l'agent (`create_ticket`) |
+| Clé API Gemini | [aistudio.google.com](https://aistudio.google.com) | Raisonnement, embeddings, fallback triage |
+
 ## Stack technique
 
 | Couche | Technologie |
@@ -15,6 +30,42 @@ clustering, insights, et action sur un tracker externe. Construit pour le hackat
 | Données | MongoDB Atlas + Atlas Vector Search |
 | Frontend | React / Vite |
 | Déploiement | Cloud Run (backend + frontend) |
+
+## Architecture
+
+```mermaid
+graph TD
+    User[Équipe produit] -->|navigateur| Frontend
+
+    subgraph GCP["Google Cloud"]
+        Frontend["Frontend<br/>Cloud Run · React/Vite"]
+        Backend["Backend<br/>Cloud Run · FastAPI + ADK"]
+        Scheduler["Cloud Scheduler<br/>cron périodique"]
+        PubSub["Pub/Sub<br/>topic feedback-cycle"]
+    end
+
+    subgraph External["Externe"]
+        Gemini["Gemini 3.5 Flash<br/>API Gemini directe"]
+        Gemma["Gemma<br/>Vertex AI · Model Garden"]
+        Mongo[("MongoDB Atlas<br/>+ Vector Search")]
+        GitHub["GitHub Issues"]
+    end
+
+    Frontend -->|REST /api| Backend
+    Backend -->|triage ingestion| Gemma
+    Gemma -.->|indisponible : fallback| Gemini
+    Backend -->|raisonnement, embeddings, chat agent| Gemini
+    Backend <-->|feedbacks, clusters, insights| Mongo
+
+    Scheduler -->|publish| PubSub
+    PubSub -->|push OIDC<br/>POST /api/agent/run-cycle| Backend
+    Backend -->|cluster → raisonne → crée un ticket| GitHub
+```
+
+Boucle autonome : `Cloud Scheduler` déclenche périodiquement un cycle via `Pub/Sub`, qui pousse
+vers `POST /api/agent/run-cycle` sur le backend. L'agent (ADK) reprend les feedbacks non
+clusterisés, les regroupe, génère des insights, et **crée un vrai ticket GitHub** pour chaque
+cluster prioritaire — sans intervention humaine.
 
 ## Architecture — deux modèles
 
@@ -40,6 +91,105 @@ feedback texte/CSV/URL
        ▼
   clustering, insights, chat agent (ADK) → Gemini 3.5 Flash
 ```
+
+## Configuration MongoDB
+
+1. **Créer un cluster MongoDB Atlas** (le tier gratuit suffit pour la démo) et récupérer l'URI
+   de connexion.
+
+2. **Créer les collections, index et données de démo** :
+   ```bash
+   cd agent
+   python3 setup_mongodb.py
+   ```
+   Ce script crée les 5 collections (`users`, `projects`, `feedbacks`, `clusters`, `insights`)
+   avec leurs validators JSON Schema, tous les index applicatifs, et insère un projet + 8
+   feedbacks **fictifs** (`project_id="demo"`) pour la démonstration.
+
+3. **Créer l'index Atlas Vector Search — action manuelle obligatoire**, PyMongo ne peut pas le
+   créer (l'étape précédente affiche ces mêmes instructions à la fin de son exécution) :
+   - Atlas UI → ton cluster → onglet **Atlas Search** → **Create Search Index**
+   - Choisir **Vector Search** (JSON editor), Database `feedbackai`, Collection `feedbacks`
+   - Coller :
+     ```json
+     {
+       "name": "feedback_vector_index",
+       "type": "vectorSearch",
+       "definition": {
+         "fields": [
+           { "type": "vector", "path": "embedding", "numDimensions": 768, "similarity": "cosine" },
+           { "type": "filter", "path": "project_id" },
+           { "type": "filter", "path": "category" },
+           { "type": "filter", "path": "sentiment" }
+         ]
+       }
+     }
+     ```
+
+## Déploiement sur Cloud Run
+
+Backend et frontend sont deux services Cloud Run distincts, construits via Cloud Build
+(`infra/cloudbuild.backend.yaml` / `infra/cloudbuild.frontend.yaml`). Le frontend a besoin de
+l'URL du backend **au moment du build** (Vite l'injecte à la compilation) : déployer le backend
+en premier.
+
+1. **Variables** (à adapter) :
+   ```bash
+   PROJECT_ID=feedbackai-497622
+   ```
+
+2. **Secrets dans Secret Manager** (jamais dans le repo) :
+   ```bash
+   echo -n "<valeur>" | gcloud secrets create gemini-api-key    --data-file=- --project=$PROJECT_ID
+   echo -n "<valeur>" | gcloud secrets create mongodb-uri       --data-file=- --project=$PROJECT_ID
+   echo -n "<valeur>" | gcloud secrets create github-token      --data-file=- --project=$PROJECT_ID
+   echo -n "<valeur>" | gcloud secrets create github-repo-map   --data-file=- --project=$PROJECT_ID
+   echo -n "<valeur>" | gcloud secrets create run-cycle-secret  --data-file=- --project=$PROJECT_ID
+   ```
+
+3. **Déployer le backend** :
+   ```bash
+   gcloud builds submit --config=infra/cloudbuild.backend.yaml \
+     --project=$PROJECT_ID .
+   ```
+   Si le service n'autorise pas les appels non authentifiés malgré `--allow-unauthenticated`
+   (le compte de service Cloud Build peut ne pas avoir le droit d'appliquer la policy IAM
+   automatiquement — rencontré en pratique), l'ouvrir explicitement :
+   ```bash
+   gcloud run services add-iam-policy-binding feedback-agent \
+     --region=us-central1 --member=allUsers --role=roles/run.invoker --project=$PROJECT_ID
+   ```
+
+4. **Récupérer l'URL du backend** :
+   ```bash
+   BACKEND_URL=$(gcloud run services describe feedback-agent \
+     --region=us-central1 --format='value(status.url)' --project=$PROJECT_ID)
+   ```
+
+5. **Déployer le frontend**, en lui passant l'URL du backend comme argument de build :
+   ```bash
+   gcloud builds submit --config=infra/cloudbuild.frontend.yaml \
+     --substitutions=_BACKEND_URL=$BACKEND_URL --project=$PROJECT_ID .
+   ```
+   Même vérification IAM que pour le backend si besoin :
+   ```bash
+   gcloud run services add-iam-policy-binding feedback-agent-frontend \
+     --region=us-central1 --member=allUsers --role=roles/run.invoker --project=$PROJECT_ID
+   ```
+
+6. **Mettre à jour `FRONTEND_ORIGINS` du backend** avec l'URL réelle du frontend (le premier
+   déploiement du backend utilise `http://localhost:5173` par défaut, cf.
+   `infra/cloudbuild.backend.yaml`) :
+   ```bash
+   FRONTEND_URL=$(gcloud run services describe feedback-agent-frontend \
+     --region=us-central1 --format='value(status.url)' --project=$PROJECT_ID)
+
+   gcloud run services update feedback-agent --region=us-central1 \
+     --update-env-vars=FRONTEND_ORIGINS=$FRONTEND_URL --project=$PROJECT_ID
+   ```
+
+**Validation** : `curl $BACKEND_URL/health` répond, et le frontend déployé charge des données
+réelles depuis ce backend (pas d'appels vers `localhost`).
 
 ## Déploiement de l'endpoint Gemma (à faire manuellement)
 
@@ -69,11 +219,19 @@ Gemma, une fois le crédit hackathon confirmé :
    GEMMA_LOCATION=<région du déploiement>
    ```
 
-5. **Vérifier le format réel des instances/réponses** de ton déploiement vLLM contre
-   `agent/gemma_client.py`. Le format `prompt`/`max_tokens` en entrée et
-   `predictions[0].text` en sortie correspond aux déploiements vLLM standards sur Vertex, mais
-   peut varier selon l'image exacte utilisée par Model Garden au moment du déploiement —
-   ajuster le client si besoin, une fois l'endpoint réel disponible pour tester.
+5. **Format réel mesuré** (déploiement « vLLM 32K context » `gemma-3-1b-it` / `NVIDIA_L4`,
+   point de terminaison dédié) — déjà géré par `agent/gemma_client.py`, mais à revérifier si le
+   déploiement change de container/config :
+   - Point de terminaison **dédié** (`dedicatedEndpointEnabled`, activé par défaut sur les
+     déploiements Model Garden « one-click ») : appel HTTP direct sur son propre domaine
+     `*.prediction.vertexai.goog`, pas le SDK Vertex (gRPC non supporté sur ce domaine, et le
+     transport REST du SDK ajoute des paramètres de requête rejetés par la passerelle).
+   - Instance envoyée au format `"@requestFormat": "chatCompletions"`
+     (`messages: [{role, content}]`) — imposé par ce type de container vLLM.
+   - Réponse : `predictions` n'est **pas** une liste, mais directement l'objet
+     `chat.completion` (`predictions.choices[0].message.content`).
+   - `gemma-3-1b-it` enveloppe parfois son JSON dans des balises ```` ```json ... ``` ````
+     malgré la consigne du prompt — nettoyé côté `ingest_feedback.py` avant parsing.
 
 6. **Undeploy après la démo** (facturation à la durée, pas à la requête) :
    ```bash
