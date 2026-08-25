@@ -26,6 +26,7 @@ from tools.ingest_feedback    import ingest_feedback
 from tools.cluster_feedback   import cluster_feedback
 from tools.generate_insights  import generate_insights
 from tools.create_ticket      import create_ticket
+from tools.fetch_url          import is_appstore_url, fetch_appstore_reviews, fetch_generic_page_text
 from db                       import get_mongo_client, get_team_language, DEFAULT_TEAM_LANGUAGE
 
 logger = logging.getLogger("feedback_agent.main")
@@ -101,10 +102,34 @@ async def _ingest_feedback_background(project_id: str, source: str, content: str
         logger.error("Échec de l'ingestion en tâche de fond (project=%s) : %s", project_id, e)
 
 
+async def _ingest_url_background(project_id: str, url: str) -> None:
+    """
+    Ingère le contenu d'une URL en tâche de fond : avis App Store (flux RSS officiel Apple,
+    plusieurs feedbacks par URL) ou texte principal d'une page générique (un seul feedback).
+    """
+    try:
+        if is_appstore_url(url):
+            reviews = await fetch_appstore_reviews(url)
+            ingested = 0
+            for review_text in reviews:
+                await ingest_feedback(project_id=project_id, source="url", content=review_text, source_url=url)
+                ingested += 1
+            logger.info("Ingestion App Store terminée (project=%s, url=%s) : %d avis ingéré(s).", project_id, url, ingested)
+        else:
+            text = await fetch_generic_page_text(url)
+            await ingest_feedback(project_id=project_id, source="url", content=text, source_url=url)
+            logger.info("Ingestion URL générique terminée (project=%s, url=%s).", project_id, url)
+    except Exception as e:
+        logger.error("Échec de l'ingestion URL en tâche de fond (project=%s, url=%s) : %s", project_id, url, e)
+
+
 @app.post("/api/ingest", status_code=202)
 async def api_ingest(req: IngestTextRequest, background_tasks: BackgroundTasks):
     """Accepte un feedback texte ou URL et l'ingère en tâche de fond (réponse immédiate)."""
-    background_tasks.add_task(_ingest_feedback_background, req.project_id, req.source, req.content)
+    if req.source == "url":
+        background_tasks.add_task(_ingest_url_background, req.project_id, req.content)
+    else:
+        background_tasks.add_task(_ingest_feedback_background, req.project_id, req.source, req.content)
     return {"status": "queued", "project_id": req.project_id}
 
 

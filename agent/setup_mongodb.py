@@ -65,6 +65,7 @@ FEEDBACKS_VALIDATOR = {
             "sentiment":   {"bsonType": "double",  "minimum": -1, "maximum": 1},
             "priority":    {"bsonType": "string",  "enum": ["high", "medium", "low"]},
             "source":      {"bsonType": "string",  "enum": ["widget", "csv", "url", "manual", "text"]},
+            "source_url":  {"bsonType": ["string", "null"], "description": "URL d'origine si source='url'"},
             "language":    {"bsonType": "string"},
             "fingerprint": {"bsonType": "string",  "description": "Hash SHA256 pour déduplication"},
             "cluster_id":  {"bsonType": ["string", "null"]},

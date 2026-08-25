@@ -138,6 +138,7 @@ async def ingest_feedback(
     project_id: str,
     source: str,
     content: str,
+    source_url: str | None = None,
 ) -> dict:
     """
     Ingère un feedback texte dans le pipeline complet.
@@ -145,7 +146,9 @@ async def ingest_feedback(
     Args:
         project_id : identifiant du projet SaaS
         source     : "text" | "csv" | "url" | "manual"
-        content    : texte brut du feedback
+        content    : texte du feedback (déjà extrait si source="url" — voir tools/fetch_url.py,
+                     ce module ne fait aucun fetch lui-même)
+        source_url : URL d'origine si source="url", pour traçabilité uniquement
 
     Returns:
         dict avec _id, category, sentiment, priority
@@ -194,6 +197,7 @@ async def ingest_feedback(
         "sentiment":   sentiment,
         "priority":    priority,
         "source":      source,
+        "source_url":  source_url,
         "language":    language,
         "fingerprint": fp,
         "embedding":   vector,

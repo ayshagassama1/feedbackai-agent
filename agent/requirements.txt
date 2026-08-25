@@ -6,6 +6,7 @@ google-adk==2.7.1
 google-cloud-aiplatform==1.164.0
 google-auth==2.56.3
 httpx==0.28.1
+beautifulsoup4==4.12.3
 numpy==2.5.2
 py3langid==0.3.0
 pydantic==2.13.4
