@@ -8,6 +8,14 @@ clustering, insights, et action sur un tracker externe. Construit pour le hackat
 `setup_mongodb.py`) sont fictifs**, générés pour illustrer le pipeline — aucune donnée
 utilisateur réelle.
 
+**Origine du code :** ce projet part d'un prototype personnel préexistant (FeedbackAI, hors
+hackathon) pour la forme générale du pipeline d'ingestion/clustering/insights et le squelette
+FastAPI/React. Construits pendant le hackathon : l'orchestration Google ADK (remplace une boucle
+maison), le triage hybride Gemma/Gemini avec détection de langue déterministe, le tool
+`create_ticket` (action externe réelle, inexistante avant), le cycle autonome Cloud
+Scheduler/Pub/Sub, les sorties bilingues, la conteneurisation et le déploiement Cloud Run des
+deux services, et la refonte complète du frontend.
+
 ## Prérequis
 
 | Outil | Version | Usage |
@@ -24,7 +32,8 @@ utilisateur réelle.
 | Couche | Technologie |
 |---|---|
 | Agent | Google ADK (`LlmAgent` + `Runner`) |
-| Raisonnement, chat, embeddings | Gemini 3.5 Flash (API Gemini directe) |
+| Raisonnement, chat, résumés | `gemini-3.5-flash` (API Gemini directe, pas Vertex — indisponible sur Vertex pour ce projet) |
+| Vectorisation (embeddings) | `gemini-embedding-001`, 768 dims (API Gemini directe) |
 | Triage par item (ingestion) | Gemma (Vertex AI, Model Garden), fallback Gemini |
 | Backend | FastAPI |
 | Données | MongoDB Atlas + Atlas Vector Search |

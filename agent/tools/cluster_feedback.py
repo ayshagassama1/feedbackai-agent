@@ -6,8 +6,10 @@ Utilise MongoDB Atlas Vector Search pour regrouper les feedbacks par similarité
 import os
 import json
 import numpy as np
+from collections import Counter
 from datetime import datetime, timezone
 
+from bson import ObjectId
 from google import genai
 from google.genai import types
 
@@ -49,7 +51,7 @@ async def cluster_feedback(project_id: str) -> dict:
     feedbacks = list(
         db.feedbacks.find(
             {"project_id": project_id},
-            {"_id": 1, "text": 1, "embedding": 1, "category": 1, "sentiment": 1},
+            {"_id": 1, "text": 1, "embedding": 1, "category": 1, "sentiment": 1, "cluster_id": 1},
         )
     )
 
@@ -122,12 +124,33 @@ Feedbacks :
             "updated_at":     datetime.now(timezone.utc),
         }
 
-        result = db.clusters.find_one_and_update(
-            {"project_id": project_id, "label": label},
-            {"$set": cluster_doc},
-            upsert=True,
-            return_document=True,
-        )
+        # Identité du cluster : PAS le label (régénéré par Gemini à chaque appel, donc jamais
+        # garanti identique d'un run à l'autre pour le même groupe de feedbacks — un upsert par
+        # label créait un nouveau document de cluster à chaque cycle, et cassait l'idempotence
+        # de create_ticket qui vérifie "issue_url" sur ce document). À la place, on réutilise le
+        # cluster déjà associé à ces feedbacks si la majorité des membres le partagent déjà.
+        existing_cluster_ids = [
+            m["cluster_id"] for m in cluster["members"] if m.get("cluster_id")
+        ]
+        reuse_id = None
+        if existing_cluster_ids:
+            candidate, count = Counter(existing_cluster_ids).most_common(1)[0]
+            if count >= len(cluster["members"]) / 2:
+                reuse_id = candidate
+
+        if reuse_id:
+            result = db.clusters.find_one_and_update(
+                {"_id": ObjectId(reuse_id), "project_id": project_id},
+                {"$set": cluster_doc},
+                return_document=True,
+            )
+        else:
+            result = db.clusters.find_one_and_update(
+                {"project_id": project_id, "label": label},
+                {"$set": cluster_doc},
+                upsert=True,
+                return_document=True,
+            )
         cluster_id = str(result["_id"])
 
         # Mettre à jour le cluster_id sur chaque feedback
