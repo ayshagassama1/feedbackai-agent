@@ -11,6 +11,7 @@ import hashlib
 import logging
 from datetime import datetime, timezone
 
+import py3langid as langid
 from google import genai
 from google.genai import types
 
@@ -21,29 +22,36 @@ from gemma_client import gemma_generate, GemmaUnavailableError
 _client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
 logger = logging.getLogger(__name__)
 
+# Produit bilingue FR/EN (cf. team_language) : on restreint les langues candidates pour la
+# détection plutôt que de couvrir l'ensemble des langues supportées par py3langid — mesuré le
+# 2026-08-25, ça améliore nettement la précision sur du français court (ex. "Génial, merci !",
+# détecté hongrois sans restriction). Accepté comme compromis : un feedback dans une langue
+# tierce serait classé fr/en par erreur, jugé acceptable pour ce produit.
+langid.set_languages(["fr", "en"])
+
 CATEGORIES = ["bug", "feature_request", "ux", "pricing", "other"]
 PRIORITIES  = ["high", "medium", "low"]
 
 # Schéma du triage par item — même forme quel que soit le modèle (Gemma ou fallback Gemini),
-# pour un comportement identique côté appelant.
+# pour un comportement identique côté appelant. La langue n'y figure pas : elle est détectée
+# séparément par py3langid (déterministe, sans appel modèle) plutôt que devinée par le LLM —
+# mesuré le 2026-08-25 : gemma-3-1b-it détectait "fr" sur un feedback anglais.
 TRIAGE_SCHEMA = {
     "type": "object",
     "properties": {
-        "language":  {"type": "string", "description": "Code langue ISO 639-1, ex. fr, en"},
         "category":  {"type": "string", "enum": CATEGORIES},
         "sentiment": {"type": "number"},
         "summary":   {"type": "string"},
     },
-    "required": ["language", "category", "sentiment", "summary"],
+    "required": ["category", "sentiment", "summary"],
 }
 
-TRIAGE_PROMPT_TEMPLATE = """Analyse ce feedback utilisateur et réponds UNIQUEMENT en JSON valide, sans markdown.
-Format : {{"language": "...", "category": "...", "sentiment": 0.0, "summary": "..."}}
+TRIAGE_PROMPT_TEMPLATE = """Analyse ce feedback utilisateur (en langue "{language}") et réponds UNIQUEMENT en JSON valide, sans markdown.
+Format : {{"category": "...", "sentiment": 0.0, "summary": "..."}}
 
-Langue     : code ISO 639-1 du feedback (ex. fr, en)
 Catégories possibles : {categories}
 Sentiment  : float entre -1.0 (très négatif) et +1.0 (très positif)
-Summary    : résumé en 1 phrase max, dans la langue du feedback
+Summary    : résumé en 1 phrase max, en langue "{language}"
 
 Feedback : "{text}"
 """
@@ -82,19 +90,31 @@ def _fingerprint(text: str) -> str:
     return hashlib.sha256(text.lower().encode()).hexdigest()[:16]
 
 
+_MARKDOWN_FENCE_RE = re.compile(r"^```(?:json)?\s*|\s*```$", re.MULTILINE)
+
+
+def _strip_markdown_fence(raw: str) -> str:
+    """Retire les balises ```json ... ``` que gemma-3-1b-it ajoute parfois malgré la consigne
+    du prompt (mesuré le 2026-08-25 : le JSON renvoyé est correct, seulement enveloppé)."""
+    return _MARKDOWN_FENCE_RE.sub("", raw.strip()).strip()
+
+
 async def _triage(text: str) -> dict:
     """
-    Triage par item (langue, catégorie, sentiment, résumé) en un seul appel modèle.
-    Essaie Gemma (Vertex, coût maîtrisé) en premier, bascule sur Gemini si l'endpoint Gemma
-    n'est pas configuré, ne répond pas, ou renvoie un JSON invalide.
+    Triage par item (langue, catégorie, sentiment, résumé) — langue détectée par py3langid,
+    reste (catégorie/sentiment/résumé) en un seul appel modèle. Essaie Gemma (Vertex, coût
+    maîtrisé) en premier, bascule sur Gemini si l'endpoint Gemma n'est pas configuré, ne
+    répond pas, ou renvoie un JSON invalide.
     """
-    prompt = TRIAGE_PROMPT_TEMPLATE.format(categories=", ".join(CATEGORIES), text=text)
+    language, _ = langid.classify(text)
+    prompt = TRIAGE_PROMPT_TEMPLATE.format(categories=", ".join(CATEGORIES), text=text, language=language)
 
     try:
         raw = await gemma_generate(prompt)
-        parsed = json.loads(raw)
+        parsed = json.loads(_strip_markdown_fence(raw))
         if parsed.get("category") not in CATEGORIES:
             raise ValueError(f"catégorie hors-schéma renvoyée par Gemma : {parsed.get('category')!r}")
+        parsed["language"] = language
         parsed["_triage_model"] = "gemma"
         return parsed
     except (GemmaUnavailableError, json.JSONDecodeError, ValueError) as e:
@@ -109,6 +129,7 @@ async def _triage(text: str) -> dict:
         ),
     )
     parsed = json.loads(response.text)
+    parsed["language"] = language
     parsed["_triage_model"] = "gemini_fallback"
     return parsed
 

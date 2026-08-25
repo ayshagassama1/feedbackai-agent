@@ -1,5 +1,5 @@
 /**
- * Thème partagé — tokens extraits du repo oryel-website (config Tailwind + index.css),
+ * Thème partagé : tokens extraits du repo oryel-website (config Tailwind + index.css),
  * étape 5.2. Les couleurs de marque (teal) et neutres (gray) sont les valeurs exactes de la
  * palette Tailwind utilisée sur oryel.dev. Le rouge est le --destructive déjà présent dans sa
  * palette. L'ambre est le seul ajout non issu d'oryel.dev, retenu avec Aissatou pour couvrir
@@ -44,7 +44,7 @@ export const theme = {
     borderSecondary: "#E5E7EB", // gray-200
     borderTertiary:  "#F3F4F6", // gray-100
 
-    // Marque (teal — identité oryel.dev)
+    // Marque (teal, identité oryel.dev)
     brand:        "#0D9488", // teal-600
     brandHover:   "#0F766E", // teal-700
     brandLight:   "#F0FDFA", // teal-50
@@ -55,7 +55,7 @@ export const theme = {
     dangerBg:     "#FEF2F2", // red-50
     dangerBorder: "#FECACA", // red-200
 
-    // Intermédiaire / priorité moyenne / sentiment neutre (ambre — seul ajout hors oryel.dev)
+    // Intermédiaire / priorité moyenne / sentiment neutre (ambre, seul ajout hors oryel.dev)
     warning:       "#B45309", // amber-700
     warningBg:     "#FFFBEB", // amber-50
     warningBorder: "#FDE68A", // amber-200

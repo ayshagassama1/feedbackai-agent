@@ -1,5 +1,5 @@
 /**
- * Libellés d'interface FR/EN — étapes 4.2 et 5.2. Indépendant de team_language (qui régit la
+ * Libellés d'interface FR/EN (étapes 4.2 et 5.2). Indépendant de team_language (qui régit la
  * langue des artefacts générés par l'agent : tickets, insights) : ceci ne couvre que le
  * texte fixe de l'interface elle-même.
  */
@@ -31,7 +31,7 @@ export const translations = {
     },
     clusters: {
       loading: "Chargement des groupes…",
-      empty: "Aucun groupe détecté — envoyez plus de feedbacks.",
+      empty: "Aucun groupe détecté. Envoyez plus de feedbacks.",
       feedbackCount: "feedbacks",
       ticketCreated: "Ticket créé",
       loadingFeedbacks: "Chargement…",
@@ -52,7 +52,7 @@ export const translations = {
       columns: "colonnes",
       submit: "Envoyer à l'agent",
       submitting: "Analyse en cours…",
-      success: "Feedback envoyé — l'agent l'analyse en tâche de fond.",
+      success: "Feedback envoyé. L'agent l'analyse en tâche de fond.",
       error: "Erreur",
       hintText: "Texte libre, e-mail client, transcript de support…",
       hintCsv: "Colonnes attendues : text, source, date (optionnelles)",
@@ -98,7 +98,7 @@ export const translations = {
     },
     clusters: {
       loading: "Loading clusters…",
-      empty: "No cluster detected yet — send more feedback.",
+      empty: "No cluster detected yet. Send more feedback.",
       feedbackCount: "feedbacks",
       ticketCreated: "Ticket created",
       loadingFeedbacks: "Loading…",
@@ -119,7 +119,7 @@ export const translations = {
       columns: "columns",
       submit: "Send to the agent",
       submitting: "Analyzing…",
-      success: "Feedback submitted — the agent is analyzing it in the background.",
+      success: "Feedback submitted. The agent is analyzing it in the background.",
       error: "Error",
       hintText: "Free text, customer email, support transcript…",
       hintCsv: "Expected columns: text, source, date (optional)",
