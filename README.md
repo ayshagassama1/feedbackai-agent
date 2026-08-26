@@ -97,6 +97,16 @@ text/CSV/URL feedback
   clustering, insights, chat agent (ADK) → Gemini 3.5 Flash
 ```
 
+**Feedback sources:** free text, CSV upload, or a URL. A URL is handled one of two ways
+(`agent/tools/fetch_url.py`):
+- An App Store app page: pulls the most recent reviews through Apple's public RSS feed (no
+  scraping), one feedback per review.
+- Any other page: fetches it and extracts the main text, treated as a single feedback.
+
+G2, Trustpilot, and Play Store aren't supported: their reviews load through client-side
+JavaScript, invisible to a plain HTTP fetch. Scraping them properly would need a headless
+browser, out of scope for now.
+
 ## MongoDB setup
 
 1. **Create a MongoDB Atlas cluster** (the free tier is enough for the demo) and grab the

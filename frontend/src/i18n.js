@@ -70,7 +70,7 @@ export const translations = {
         "Résume les feedbacks des 7 derniers jours",
       ],
     },
-    langToggle: "English",
+    langToggle: "Français",
   },
   en: {
     appName: "FeedbackAI",
@@ -137,6 +137,6 @@ export const translations = {
         "Summarize the last 7 days of feedback",
       ],
     },
-    langToggle: "Français",
+    langToggle: "English",
   },
 };
