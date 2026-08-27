@@ -162,11 +162,24 @@ first.
    echo -n "<value>" | gcloud secrets create run-cycle-secret  --data-file=- --project=$PROJECT_ID
    ```
 
-3. **Deploy the backend:**
+3. **Deploy the backend.** `--set-env-vars` in `infra/cloudbuild.backend.yaml` **replaces the
+   entire environment, not just the keys you pass** — redeploying without explicit
+   substitutions silently resets `FRONTEND_ORIGINS` to `http://localhost:5173` and
+   `GEMMA_ENDPOINT_ID` to empty (Gemma goes silently disabled, straight to the Gemini
+   fallback). This bit us in practice on a routine redeploy. **Always pass all three
+   substitutions, every time, including the very first deploy:**
    ```bash
+   FRONTEND_URL=$(gcloud run services describe feedback-agent-frontend \
+     --region=us-central1 --format='value(status.url)' --project=$PROJECT_ID 2>/dev/null)
+   FRONTEND_URL=${FRONTEND_URL:-http://localhost:5173}   # not deployed yet on a first-ever run
+
    gcloud builds submit --config=infra/cloudbuild.backend.yaml \
+     --substitutions=_FRONTEND_ORIGIN=$FRONTEND_URL,_GEMMA_ENDPOINT_ID=<your Gemma endpoint id>,_GEMMA_LOCATION=<your Gemma region> \
      --project=$PROJECT_ID .
    ```
+   Leave `_GEMMA_ENDPOINT_ID` empty (`_GEMMA_ENDPOINT_ID=`) if Gemma isn't deployed yet: the app
+   falls back to Gemini, on purpose (see "Two models" above).
+
    If the service still rejects unauthenticated calls despite `--allow-unauthenticated` (the
    Cloud Build service account may lack permission to apply the IAM policy on its own, this
    happened in practice), open it explicitly:
@@ -192,8 +205,9 @@ first.
      --region=us-central1 --member=allUsers --role=roles/run.invoker --project=$PROJECT_ID
    ```
 
-6. **Update the backend's `FRONTEND_ORIGINS`** with the real frontend URL (the first backend
-   deploy defaults to `http://localhost:5173`, see `infra/cloudbuild.backend.yaml`):
+6. **First deploy only:** the backend was deployed in step 3 before the frontend existed, so it
+   fell back to `http://localhost:5173`. Now that the frontend is up, point it at the real URL
+   (safe: `--update-env-vars` merges instead of replacing, unlike `--set-env-vars`):
    ```bash
    FRONTEND_URL=$(gcloud run services describe feedback-agent-frontend \
      --region=us-central1 --format='value(status.url)' --project=$PROJECT_ID)
@@ -201,6 +215,10 @@ first.
    gcloud run services update feedback-agent --region=us-central1 \
      --update-env-vars=FRONTEND_ORIGINS=$FRONTEND_URL --project=$PROJECT_ID
    ```
+   On every later backend redeploy, step 3 already re-fetches this URL on its own, no manual
+   fix-up needed, as long as the substitutions are passed as shown there. This same
+   `--update-env-vars` command is also the fastest way to patch `FRONTEND_ORIGINS` or
+   `GEMMA_ENDPOINT_ID` alone, without a full rebuild.
 
 **Check:** `curl $BACKEND_URL/health` responds, and the deployed frontend loads real data from
 that backend (no calls to `localhost`).

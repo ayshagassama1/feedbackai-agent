@@ -11,9 +11,8 @@ export default function InsightsDashboard({ projectId, lang }) {
   const [error, setError]       = useState(null);
   const [refreshing, setRefreshing] = useState(false);
 
-  const fetchInsights = async (silent = false) => {
-    if (!silent) setLoading(true);
-    else setRefreshing(true);
+  const fetchInsights = async () => {
+    setLoading(true);
     try {
       const res = await fetch(`${API_URL}/api/insights?project_id=${projectId}`);
       if (!res.ok) throw new Error(`${t.insights.error} ${res.status}`);
@@ -23,6 +22,24 @@ export default function InsightsDashboard({ projectId, lang }) {
       setError(err.message);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const refreshInsights = async () => {
+    // POST /refresh recalcule réellement (stats, top issues, recommandations) à partir des
+    // feedbacks et clusters actuels — GET /api/insights ne fait que relire le dernier rapport
+    // déjà stocké, jamais le recalcul lui-même.
+    setRefreshing(true);
+    try {
+      const res = await fetch(`${API_URL}/api/insights/refresh?project_id=${projectId}`, {
+        method: "POST",
+      });
+      if (!res.ok) throw new Error(`${t.insights.error} ${res.status}`);
+      const data = await res.json();
+      setInsights(data);
+    } catch (err) {
+      setError(err.message);
+    } finally {
       setRefreshing(false);
     }
   };
@@ -58,7 +75,7 @@ export default function InsightsDashboard({ projectId, lang }) {
         <div style={styles.sectionHeader}>
           <span style={styles.sectionTitle}>{t.insights.priorityIssues}</span>
           <button
-            onClick={() => fetchInsights(true)}
+            onClick={refreshInsights}
             style={styles.refreshBtn}
             disabled={refreshing}
           >
