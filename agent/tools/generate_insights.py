@@ -5,6 +5,7 @@ Génère un rapport actionnable à partir des clusters et feedbacks d'un projet.
 
 import os
 import json
+import logging
 from datetime import datetime, timezone, timedelta
 
 from google import genai
@@ -14,6 +15,7 @@ from db import get_mongo_client, get_team_language
 from config import MODEL_NAME
 
 _client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
+logger = logging.getLogger(__name__)
 
 RECOMMENDATIONS_SCHEMA = {
     "type": "array",
@@ -113,15 +115,22 @@ Génère exactement 3 recommandations actionnables pour cette semaine, rédigée
 (quelle que soit la langue des feedbacks d'origine).
 """
 
-    rec_response = await _client.aio.models.generate_content(
-        model=MODEL_NAME,
-        contents=rec_prompt,
-        config=types.GenerateContentConfig(
-            response_mime_type="application/json",
-            response_schema=RECOMMENDATIONS_SCHEMA,
-        ),
-    )
-    recommendations = json.loads(rec_response.text)
+    try:
+        rec_response = await _client.aio.models.generate_content(
+            model=MODEL_NAME,
+            contents=rec_prompt,
+            config=types.GenerateContentConfig(
+                response_mime_type="application/json",
+                response_schema=RECOMMENDATIONS_SCHEMA,
+            ),
+        )
+        recommendations = json.loads(rec_response.text)
+    except Exception as e:
+        # Gemini indisponible/rate-limité : stats et top issues (déjà calculés au-dessus, sans
+        # appel modèle) restent valables sans recommandations plutôt que de faire planter tout
+        # le cycle. Mesuré le 2026-08-28, même cause que sur l'étiquetage de cluster.
+        logger.warning("Génération des recommandations indisponible (%s), insight sans recommandations.", e)
+        recommendations = []
 
     # ── Sauvegarder l'insight ────────────────────────────────────────────────
     insight_doc = {

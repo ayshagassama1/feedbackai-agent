@@ -6,6 +6,7 @@ un cluster déjà ticketé (issue_url en base) ne génère jamais de doublon.
 
 import os
 import json
+import logging
 import httpx
 from bson import ObjectId
 
@@ -17,6 +18,7 @@ from config import MODEL_NAME, TICKET_MIN_FEEDBACK_COUNT, TICKET_SENTIMENT_THRES
 from tools.notify import notify
 
 _client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
+logger = logging.getLogger(__name__)
 
 GITHUB_API_URL = "https://api.github.com"
 
@@ -112,15 +114,29 @@ async def create_ticket(project_id: str, cluster_id: str) -> dict:
         language_name=language_name,
     )
 
-    response = await _client.aio.models.generate_content(
-        model=MODEL_NAME,
-        contents=prompt,
-        config=types.GenerateContentConfig(
-            response_mime_type="application/json",
-            response_schema=TICKET_SCHEMA,
-        ),
-    )
-    ticket = json.loads(response.text)
+    try:
+        response = await _client.aio.models.generate_content(
+            model=MODEL_NAME,
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                response_mime_type="application/json",
+                response_schema=TICKET_SCHEMA,
+            ),
+        )
+        ticket = json.loads(response.text)
+        # Filet mesuré le 2026-08-28 : Gemini double-échappe parfois le corps sous
+        # response_schema (le JSON contient le texte littéral "\n" au lieu d'un vrai saut de
+        # ligne) — intermittent, pas systématique (3 tickets précédents corrects, celui-ci non).
+        # Sans ce nettoyage, le ticket GitHub affiche des "\n" visibles au lieu d'un markdown
+        # correctement formaté.
+        ticket["body"] = ticket["body"].replace("\\n", "\n")
+    except Exception as e:
+        # Gemini indisponible/rate-limité : reporter la création du ticket au prochain cycle
+        # plutôt que de planter tout /api/agent/run-cycle (qui bloquerait aussi les autres
+        # clusters de la même boucle). Le cluster garde issue_url vide, donc rien n'est perdu :
+        # create_ticket retentera au cycle suivant. Mesuré le 2026-08-28.
+        logger.warning("Génération du ticket indisponible pour ce cluster (%s), reporté.", e)
+        return {"created": False, "skipped": True, "reason": f"Gemini indisponible : {e}"}
 
     repo = _repo_for_project(project_id)
     token = os.environ["GITHUB_TOKEN"]

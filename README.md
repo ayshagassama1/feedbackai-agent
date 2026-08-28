@@ -1,8 +1,9 @@
 # feedbackai-agent
 
-An agent that reads raw product feedback for early-stage SaaS teams: ingestion, triage,
-clustering, insights, and action on an external tracker. Built for the *All Things Agentic*
-hackathon (Devpost / Google Cloud).
+An agent that reads raw product feedback for an early-stage SaaS product: it ingests, triages,
+and clusters the feedback, then acts on it by opening a ticket in an external tracker (GitHub
+Issues) for each problem that matters. Built for the *All Things Agentic* hackathon
+(Devpost / Google Cloud).
 
 **The demo projects and feedbacks (`project_id="demo"`, inserted by `setup_mongodb.py`) are
 fictional**, made up to illustrate the pipeline. No real user data.
@@ -48,11 +49,11 @@ graph TD
         Backend["Backend<br/>Cloud Run · FastAPI + ADK"]
         Scheduler["Cloud Scheduler<br/>periodic cron"]
         PubSub["Pub/Sub<br/>feedback-cycle topic"]
+        Gemma["Gemma<br/>Vertex AI · Model Garden"]
     end
 
     subgraph External["External"]
         Gemini["Gemini 3.5 Flash<br/>direct Gemini API"]
-        Gemma["Gemma<br/>Vertex AI · Model Garden"]
         Mongo[("MongoDB Atlas<br/>+ Vector Search")]
         GitHub["GitHub Issues"]
     end
@@ -117,8 +118,9 @@ browser, out of scope for now.
    cd agent
    python3 setup_mongodb.py
    ```
-   This script creates the 5 collections (`users`, `projects`, `feedbacks`, `clusters`,
-   `insights`) with their JSON Schema validators, all application indexes, and inserts one
+   This script creates the collections (`projects`, `feedbacks`, `clusters`, `insights`, plus a
+   legacy `users` collection kept for schema compatibility but unused, this project has no
+   authentication) with their JSON Schema validators, all application indexes, and inserts one
    project plus 8 **fictional** feedbacks (`project_id="demo"`) for the demo.
 
 3. **Create the Atlas Vector Search index. Manual step, no way around it:** PyMongo can't
@@ -164,21 +166,29 @@ first.
 
 3. **Deploy the backend.** `--set-env-vars` in `infra/cloudbuild.backend.yaml` **replaces the
    entire environment, not just the keys you pass** — redeploying without explicit
-   substitutions silently resets `FRONTEND_ORIGINS` to `http://localhost:5173` and
+   substitutions silently resets `FRONTEND_ORIGINS` to `http://localhost:5173`,
    `GEMMA_ENDPOINT_ID` to empty (Gemma goes silently disabled, straight to the Gemini
-   fallback). This bit us in practice on a routine redeploy. **Always pass all three
-   substitutions, every time, including the very first deploy:**
+   fallback), and **`PUBSUB_PUSH_SERVICE_ACCOUNT`/`RUN_CYCLE_AUDIENCE` to empty (the real
+   Cloud Scheduler → Pub/Sub autonomous cycle starts failing every push with 401, silently —
+   direct calls with `RUN_CYCLE_SECRET` still work, which masks it)**. This bit us in practice
+   on routine redeploys, twice. **Always pass all five substitutions, every time, including
+   the very first deploy:**
    ```bash
    FRONTEND_URL=$(gcloud run services describe feedback-agent-frontend \
      --region=us-central1 --format='value(status.url)' --project=$PROJECT_ID 2>/dev/null)
    FRONTEND_URL=${FRONTEND_URL:-http://localhost:5173}   # not deployed yet on a first-ever run
 
+   BACKEND_URL=$(gcloud run services describe feedback-agent \
+     --region=us-central1 --format='value(status.url)' --project=$PROJECT_ID 2>/dev/null)
+
    gcloud builds submit --config=infra/cloudbuild.backend.yaml \
-     --substitutions=_FRONTEND_ORIGIN=$FRONTEND_URL,_GEMMA_ENDPOINT_ID=<your Gemma endpoint id>,_GEMMA_LOCATION=<your Gemma region> \
+     --substitutions=_FRONTEND_ORIGIN=$FRONTEND_URL,_GEMMA_ENDPOINT_ID=<your Gemma endpoint id>,_GEMMA_LOCATION=<your Gemma region>,_PUBSUB_PUSH_SERVICE_ACCOUNT=pubsub-run-cycle-invoker@$PROJECT_ID.iam.gserviceaccount.com,_RUN_CYCLE_AUDIENCE=${BACKEND_URL}/api/agent/run-cycle \
      --project=$PROJECT_ID .
    ```
    Leave `_GEMMA_ENDPOINT_ID` empty (`_GEMMA_ENDPOINT_ID=`) if Gemma isn't deployed yet: the app
-   falls back to Gemini, on purpose (see "Two models" above).
+   falls back to Gemini, on purpose (see "Two models" above). Leave
+   `_PUBSUB_PUSH_SERVICE_ACCOUNT`/`_RUN_CYCLE_AUDIENCE` empty on a first-ever deploy, before the
+   Pub/Sub setup in "Scheduled trigger" below exists.
 
    If the service still rejects unauthenticated calls despite `--allow-unauthenticated` (the
    Cloud Build service account may lack permission to apply the IAM policy on its own, this
@@ -387,3 +397,13 @@ See `.env.example` for the full list. Summary:
 | `GITHUB_TOKEN` / `GITHUB_REPO_MAP` | Creating GitHub tickets | Yes, for `create_ticket` |
 | `RUN_CYCLE_SECRET` | Direct auth for `run-cycle` (testing/debugging) | No |
 | `PUBSUB_PUSH_SERVICE_ACCOUNT` / `RUN_CYCLE_AUDIENCE` | OIDC auth for `run-cycle` from Pub/Sub | No, without them only `RUN_CYCLE_SECRET` works |
+
+## Scope and future work
+
+`project_id` genuinely scopes the data: every write is tagged with it, and every backend read
+filters by it, including the Atlas Vector Search tool used by the chat agent (verified end to
+end, not just at the schema level). What's not built: no authentication, no user accounts, and
+no runtime tenant switcher — each frontend deployment serves a single `project_id`, fixed at
+build time via `VITE_PROJECT_ID`. The scheduled autonomous cycle currently runs for one project
+(one Cloud Scheduler job); the code itself accepts a `project_id` per run and would support one
+job per project without changes.

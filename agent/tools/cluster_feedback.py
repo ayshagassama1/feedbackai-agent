@@ -5,6 +5,7 @@ Utilise MongoDB Atlas Vector Search pour regrouper les feedbacks par similarité
 
 import os
 import json
+import logging
 import numpy as np
 from collections import Counter
 from datetime import datetime, timezone
@@ -17,6 +18,7 @@ from db import get_mongo_client, get_team_language
 from config import MODEL_NAME
 
 _client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
+logger = logging.getLogger(__name__)
 
 SIMILARITY_THRESHOLD = 0.82   # seuil de similarité cosine pour regrouper
 MIN_CLUSTER_SIZE     = 2      # nb minimum de feedbacks pour former un cluster
@@ -102,15 +104,26 @@ n'importe quelle langue — le label doit être en {language_name} quoi qu'il ar
 Feedbacks :
 {chr(10).join(f'- {t}' for t in sample_texts)}
 """
-        label_response = await _client.aio.models.generate_content(
-            model=MODEL_NAME,
-            contents=label_prompt,
-            config=types.GenerateContentConfig(
-                response_mime_type="application/json",
-                response_schema=LABEL_SCHEMA,
-            ),
-        )
-        label = json.loads(label_response.text)["label"][:60]
+        try:
+            label_response = await _client.aio.models.generate_content(
+                model=MODEL_NAME,
+                contents=label_prompt,
+                config=types.GenerateContentConfig(
+                    response_mime_type="application/json",
+                    response_schema=LABEL_SCHEMA,
+                ),
+            )
+            label = json.loads(label_response.text)["label"][:60]
+        except Exception as e:
+            # Gemini indisponible/rate-limité (429 fréquent sur le palier gratuit, 5 req/min) :
+            # un label de repli déterministe, plutôt que de faire planter tout le cycle — le
+            # comptage, le seuil et la création de ticket ne dépendent pas du label lui-même.
+            # Mesuré le 2026-08-28 : sans ce filet, un simple 429 sur l'étiquetage suffisait à
+            # faire échouer /api/agent/run-cycle en 500, que Pub/Sub relançait alors en boucle.
+            categories = [m.get("category") for m in cluster["members"] if m.get("category")]
+            top_category = Counter(categories).most_common(1)
+            label = top_category[0][0].replace("_", " ").capitalize() if top_category else "Feedback cluster"
+            logger.warning("Étiquetage Gemini indisponible (%s), label de repli %r utilisé.", e, label)
 
         member_ids = [str(m["_id"]) for m in cluster["members"]]
 

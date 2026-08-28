@@ -23,7 +23,7 @@ steps:
       - --allow-unauthenticated
       - --memory=1Gi
       - --cpu=1
-      - --set-env-vars=GCP_PROJECT_ID=$PROJECT_ID,MONGODB_DB=feedbackai,GEMMA_LOCATION=${_GEMMA_LOCATION},GEMMA_ENDPOINT_ID=${_GEMMA_ENDPOINT_ID},FRONTEND_ORIGINS=${_FRONTEND_ORIGIN}
+      - --set-env-vars=GCP_PROJECT_ID=$PROJECT_ID,MONGODB_DB=feedbackai,GEMMA_LOCATION=${_GEMMA_LOCATION},GEMMA_ENDPOINT_ID=${_GEMMA_ENDPOINT_ID},FRONTEND_ORIGINS=${_FRONTEND_ORIGIN},PUBSUB_PUSH_SERVICE_ACCOUNT=${_PUBSUB_PUSH_SERVICE_ACCOUNT},RUN_CYCLE_AUDIENCE=${_RUN_CYCLE_AUDIENCE}
       - --set-secrets=GEMINI_API_KEY=gemini-api-key:latest,MONGODB_URI=mongodb-uri:latest,GITHUB_TOKEN=github-token:latest,GITHUB_REPO_MAP=github-repo-map:latest,RUN_CYCLE_SECRET=run-cycle-secret:latest
 
 images:
@@ -39,3 +39,12 @@ substitutions:
   # À écraser au submit avec l'URL réelle du frontend déployé, ex. :
   #   --substitutions=_FRONTEND_ORIGIN=https://feedback-agent-frontend-xxxx.run.app
   _FRONTEND_ORIGIN: "http://localhost:5173"
+  # Auth OIDC de la subscription push Pub/Sub (étape 3.2, README section "Scheduled trigger").
+  # Vides par défaut -> _verify_pubsub_oidc() rejette systématiquement (401), le cycle autonome
+  # planifié ne fonctionne plus tant qu'ils ne sont pas explicitement passés au submit. Mesuré
+  # le 2026-08-28 : --set-env-vars remplace tout l'environnement à chaque redéploiement, donc un
+  # réglage fait une seule fois via `gcloud run services update` était silencieusement effacé à
+  # chaque redéploiement suivant du backend, cassant la vraie boucle Pub/Sub sans que les tests
+  # au secret partagé (RUN_CYCLE_SECRET) ne le révèlent.
+  _PUBSUB_PUSH_SERVICE_ACCOUNT: ""
+  _RUN_CYCLE_AUDIENCE: ""
