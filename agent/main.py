@@ -252,13 +252,25 @@ async def api_agent_chat(req: ChatRequest):
     )
 
     final_text = ""
-    async for event in _runner.run_async(
-        user_id=session.user_id, session_id=session.id, new_message=new_message
-    ):
-        if event.content and event.content.parts:
-            for part in event.content.parts:
-                if part.text:
-                    final_text = part.text
+    try:
+        async for event in _runner.run_async(
+            user_id=session.user_id, session_id=session.id, new_message=new_message
+        ):
+            if event.content and event.content.parts:
+                for part in event.content.parts:
+                    if part.text:
+                        final_text = part.text
+    except Exception as e:
+        # Gemini indisponible/rate-limité : sans ce filet, l'exception remonte non gérée et
+        # coupe la connexion en plein milieu, ce que le navigateur rapporte comme "Failed to
+        # fetch" plutôt qu'une erreur HTTP propre. Mesuré le 2026-08-30 pendant un tournage.
+        logger.error("Échec du chat agent (project=%s) : %s", req.project_id, e)
+        message = (
+            "L'agent est momentanément indisponible (modèle surchargé). Réessaie dans un instant."
+            if get_team_language(req.project_id) == "fr"
+            else "The agent is temporarily unavailable (model overloaded). Try again in a moment."
+        )
+        raise HTTPException(status_code=503, detail=message)
 
     return {"response": final_text}
 

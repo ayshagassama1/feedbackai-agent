@@ -34,7 +34,10 @@ export default function AgentChat({ projectId, lang }) {
           history: messages.slice(-6),
         }),
       });
-      if (!res.ok) throw new Error(`${res.status}`);
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.detail ?? `${res.status}`);
+      }
       const data = await res.json();
       setMessages((prev) => [...prev, { role: "assistant", content: data.response }]);
     } catch (err) {
