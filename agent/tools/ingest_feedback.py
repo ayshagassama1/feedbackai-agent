@@ -81,7 +81,9 @@ def _clean(text: str) -> str:
     """Normalise le texte brut."""
     text = text.strip()
     text = re.sub(r"\s+", " ", text)
-    text = re.sub(r"[^\w\s.,!?;:()\-'\"àâäéèêëîïôùûüçæœ]", "", text, flags=re.UNICODE)
+    # [ ] autorisés : ce sont les marqueurs laissés par _scrub_pii ("[email masqué]",
+    # "[téléphone masqué]"), qui doit tourner avant ce nettoyage — voir ingest_feedback().
+    text = re.sub(r"[^\w\s.,!?;:()\[\]\-'\"àâäéèêëîïôùûüçæœ]", "", text, flags=re.UNICODE)
     return text
 
 
@@ -155,9 +157,14 @@ async def ingest_feedback(
     """
     db = get_mongo_client()
 
-    # ── 1. Nettoyage + scrub PII ──────────────────────────────────────────────
-    text = _clean(content)
-    text = _scrub_pii(text)
+    # ── 1. Scrub PII + nettoyage ───────────────────────────────────────────────
+    # Ordre important : _scrub_pii doit tourner AVANT _clean. La liste de caractères
+    # autorisés par _clean ne contient pas "@" — la faire tourner en premier détruisait le
+    # "@" de chaque email avant que la regex de _scrub_pii ne puisse le repérer, laissant
+    # l'adresse fuiter en clair (juste amputée de son "@"). Mesuré le 2026-08-30 sur un feedback
+    # réel : "john.doe@gmail.com" stocké tel quel comme "john.doegmail.com" au lieu d'être masqué.
+    text = _scrub_pii(content)
+    text = _clean(text)
     if len(text) < 5:
         raise ValueError("Feedback trop court après nettoyage.")
 

@@ -108,6 +108,46 @@ G2, Trustpilot, and Play Store aren't supported: their reviews load through clie
 JavaScript, invisible to a plain HTTP fetch. Scraping them properly would need a headless
 browser, out of scope for now.
 
+## How it works: from feedback to ticket
+
+The pipeline has two separate phases with different triggers, and each decision point has its
+own rule. Worth spelling out precisely, since "a cluster forms" and "a ticket gets filed" are
+governed by different, unrelated conditions.
+
+**1. Ingestion (real-time, one feedback at a time).** Every incoming feedback is cleaned,
+scrubbed of emails/phone numbers, triaged (language, category, sentiment, one-line summary),
+embedded, and stored. This runs immediately on submission. Nothing downstream happens yet: a
+freshly ingested feedback sits alone until the next cycle.
+
+**2. Clustering (batch, part of the autonomous cycle).** `cluster_feedback()`
+(`agent/tools/cluster_feedback.py`) groups feedbacks by semantic similarity of their
+embeddings: cosine similarity ≥ `SIMILARITY_THRESHOLD` (0.82), at least `MIN_CLUSTER_SIZE` (2)
+members. **Sentiment plays no role here**: a cluster of universally positive feedback forms
+exactly the same way as a cluster of complaints, as long as the embeddings are close enough. A
+lone feedback with no semantic match to anything else never becomes a cluster; it stays visible
+in the raw feedback list, not in the Clusters tab.
+
+**3. Ticket creation (batch, same cycle, per cluster).** `create_ticket()`
+(`agent/tools/create_ticket.py`) only fires for a cluster that clears **both**
+`TICKET_MIN_FEEDBACK_COUNT` (3 feedbacks) **and** `TICKET_SENTIMENT_THRESHOLD` (average
+sentiment ≤ -0.3). This is where sentiment actually gates action: the intent is to only file
+tickets for corroborated, clearly negative problems, not one-off complaints or positive
+clusters. A cluster below either threshold is simply skipped, silently, every cycle, until it
+either grows or its sentiment worsens.
+
+**4. Notification.** Fires automatically whenever step 3 creates a ticket. Not triggered
+independently today.
+
+Both thresholds in steps 2 and 3 are plain constants (`agent/tools/cluster_feedback.py`,
+`agent/config.py`), not configurable per project. Tuned once for this hackathon's demo data,
+not validated against real production feedback volume. A fuller version would make them
+per-project settings (a noisy, high-volume product likely needs a stricter threshold than a
+low-volume one), and would very likely replace the single hardcoded 0.82 cosine cutoff with
+something less brittle, an actual clustering algorithm instead of the current single-pass
+greedy nearest-centroid (see the comment in `cluster_feedback.py`), since greedy assignment is
+sensitive to the order feedbacks happen to be processed in and can under- or over-split
+borderline cases.
+
 ## MongoDB setup
 
 1. **Create a MongoDB Atlas cluster** (the free tier is enough for the demo) and grab the
@@ -165,11 +205,11 @@ first.
    ```
 
 3. **Deploy the backend.** `--set-env-vars` in `infra/cloudbuild.backend.yaml` **replaces the
-   entire environment, not just the keys you pass** — redeploying without explicit
+   entire environment, not just the keys you pass**: redeploying without explicit
    substitutions silently resets `FRONTEND_ORIGINS` to `http://localhost:5173`,
    `GEMMA_ENDPOINT_ID` to empty (Gemma goes silently disabled, straight to the Gemini
    fallback), and **`PUBSUB_PUSH_SERVICE_ACCOUNT`/`RUN_CYCLE_AUDIENCE` to empty (the real
-   Cloud Scheduler → Pub/Sub autonomous cycle starts failing every push with 401, silently —
+   Cloud Scheduler → Pub/Sub autonomous cycle starts failing every push with 401, silently;
    direct calls with `RUN_CYCLE_SECRET` still work, which masks it)**. This bit us in practice
    on routine redeploys, twice. **Always pass all five substitutions, every time, including
    the very first deploy:**
@@ -235,8 +275,8 @@ that backend (no calls to `localhost`).
 
 ## Deploying the Gemma endpoint (manual)
 
-Claude Code doesn't touch GCP infrastructure directly. Here's the exact sequence to deploy the
-Gemma endpoint once the hackathon credit is confirmed:
+No automated script for this one: Vertex AI Model Garden deployment is a console-driven flow.
+Here's the exact sequence:
 
 1. **Pick the model in Model Garden**
    GCP Console → Vertex AI → Model Garden → search "Gemma". Pick an instruction-tuned variant:
@@ -403,7 +443,7 @@ See `.env.example` for the full list. Summary:
 `project_id` genuinely scopes the data: every write is tagged with it, and every backend read
 filters by it, including the Atlas Vector Search tool used by the chat agent (verified end to
 end, not just at the schema level). What's not built: no authentication, no user accounts, and
-no runtime tenant switcher — each frontend deployment serves a single `project_id`, fixed at
+no runtime tenant switcher: each frontend deployment serves a single `project_id`, fixed at
 build time via `VITE_PROJECT_ID`. The scheduled autonomous cycle currently runs for one project
 (one Cloud Scheduler job); the code itself accepts a `project_id` per run and would support one
 job per project without changes.

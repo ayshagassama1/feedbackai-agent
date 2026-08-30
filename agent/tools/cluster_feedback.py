@@ -92,6 +92,7 @@ async def cluster_feedback(project_id: str) -> dict:
 
     # Générer les labels avec Gemini
     updated = 0
+    claimed_cluster_ids: set[str] = set()
     for cluster in clusters:
         sample_texts = [m["text"] for m in cluster["members"][:5]]
         avg_sentiment = float(np.mean([m.get("sentiment", 0) for m in cluster["members"]]))
@@ -142,16 +143,26 @@ Feedbacks :
         # label créait un nouveau document de cluster à chaque cycle, et cassait l'idempotence
         # de create_ticket qui vérifie "issue_url" sur ce document). À la place, on réutilise le
         # cluster déjà associé à ces feedbacks si la majorité des membres le partagent déjà.
+        # Un cluster précédent peut avoir été scindé par cette passe (le clustering glouton est
+        # sensible à l'ordre de traitement) : plusieurs nouveaux groupes calculés ici peuvent
+        # alors partager la même majorité de cluster_id d'origine. Sans garde-fou, chacun
+        # réutiliserait le même document Mongo, le dernier du lot écrasant les stats
+        # (feedback_count, avg_sentiment) des groupes précédents sans jamais détacher leurs
+        # membres — le document affiche alors un compte inférieur au nombre réel de feedbacks
+        # qui portent encore son cluster_id. Mesuré le 2026-08-30 : un cluster à 5 membres réels
+        # affichait feedback_count=2. `claimed_cluster_ids` empêche un même _id d'être réutilisé
+        # deux fois dans la même passe ; le groupe suivant crée son propre document à la place.
         existing_cluster_ids = [
             m["cluster_id"] for m in cluster["members"] if m.get("cluster_id")
         ]
         reuse_id = None
         if existing_cluster_ids:
             candidate, count = Counter(existing_cluster_ids).most_common(1)[0]
-            if count >= len(cluster["members"]) / 2:
+            if count >= len(cluster["members"]) / 2 and candidate not in claimed_cluster_ids:
                 reuse_id = candidate
 
         if reuse_id:
+            claimed_cluster_ids.add(reuse_id)
             result = db.clusters.find_one_and_update(
                 {"_id": ObjectId(reuse_id), "project_id": project_id},
                 {"$set": cluster_doc},
