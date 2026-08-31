@@ -17,7 +17,7 @@ from db import get_mongo_client, get_team_language
 from config import MODEL_NAME, TICKET_MIN_FEEDBACK_COUNT, TICKET_SENTIMENT_THRESHOLD
 from tools.notify import notify
 
-_client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
+_client = genai.Client()  # mode Vertex AI via GOOGLE_GENAI_USE_VERTEXAI/GOOGLE_CLOUD_PROJECT/GOOGLE_CLOUD_LOCATION (voir .env)
 logger = logging.getLogger(__name__)
 
 GITHUB_API_URL = "https://api.github.com"
@@ -98,81 +98,112 @@ async def create_ticket(project_id: str, cluster_id: str) -> dict:
             ),
         }
 
-    samples = list(
-        db.feedbacks.find({"project_id": project_id, "cluster_id": cluster_id}, {"text": 1}).limit(5)
+    # ── Claim atomique ────────────────────────────────────────────────────────
+    # La vérification "issue_url" ci-dessus (lecture) et l'écriture finale d'issue_url sont
+    # deux opérations séparées : entre les deux, un second appel concurrent sur le même
+    # cluster (Pub/Sub redélivre le message si le premier traitement dépasse le délai
+    # d'accusé de réception de la subscription, plus probable depuis que le cycle enchaîne
+    # plusieurs appels Vertex/Gemini) voit lui aussi "issue_url" vide et part créer son propre
+    # ticket. Mesuré le 2026-08-30 : deux tickets créés à 11 secondes d'intervalle pour le même
+    # cluster. Cette écriture conditionnelle réserve le cluster de façon atomique : un seul
+    # appel concurrent peut réussir ce find_one_and_update, les autres voient le filtre échouer
+    # et s'arrêtent avant même d'appeler Gemini ou GitHub.
+    claimed = db.clusters.find_one_and_update(
+        {"_id": cluster["_id"], "issue_url": {"$exists": False}},
+        {"$set": {"issue_url": "pending"}},
     )
-    samples_text = "\n".join(f"- {s['text']}" for s in samples) or "(aucun extrait disponible)"
-
-    team_language = get_team_language(project_id)
-    language_name = "français" if team_language == "fr" else "English"
-
-    prompt = TICKET_PROMPT_TEMPLATE.format(
-        label=cluster["label"],
-        feedback_count=cluster["feedback_count"],
-        avg_sentiment=cluster.get("avg_sentiment", 0.0),
-        samples=samples_text,
-        language_name=language_name,
-    )
+    if claimed is None:
+        return {
+            "created": False,
+            "skipped": True,
+            "reason": "création déjà en cours pour ce cluster (appel concurrent détecté)",
+        }
 
     try:
-        response = await _client.aio.models.generate_content(
-            model=MODEL_NAME,
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                response_mime_type="application/json",
-                response_schema=TICKET_SCHEMA,
-            ),
+        samples = list(
+            db.feedbacks.find({"project_id": project_id, "cluster_id": cluster_id}, {"text": 1}).limit(5)
         )
-        ticket = json.loads(response.text)
-        # Filet mesuré le 2026-08-28 : Gemini double-échappe parfois le corps sous
-        # response_schema (le JSON contient le texte littéral "\n" au lieu d'un vrai saut de
-        # ligne) — intermittent, pas systématique (3 tickets précédents corrects, celui-ci non).
-        # Sans ce nettoyage, le ticket GitHub affiche des "\n" visibles au lieu d'un markdown
-        # correctement formaté.
-        ticket["body"] = ticket["body"].replace("\\n", "\n")
+        samples_text = "\n".join(f"- {s['text']}" for s in samples) or "(aucun extrait disponible)"
+
+        team_language = get_team_language(project_id)
+        language_name = "français" if team_language == "fr" else "English"
+
+        prompt = TICKET_PROMPT_TEMPLATE.format(
+            label=cluster["label"],
+            feedback_count=cluster["feedback_count"],
+            avg_sentiment=cluster.get("avg_sentiment", 0.0),
+            samples=samples_text,
+            language_name=language_name,
+        )
+
+        try:
+            response = await _client.aio.models.generate_content(
+                model=MODEL_NAME,
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    response_mime_type="application/json",
+                    response_schema=TICKET_SCHEMA,
+                ),
+            )
+            ticket = json.loads(response.text)
+            # Filet mesuré le 2026-08-28 : Gemini double-échappe parfois le corps sous
+            # response_schema (le JSON contient le texte littéral "\n" au lieu d'un vrai saut de
+            # ligne) — intermittent, pas systématique (3 tickets précédents corrects, celui-ci non).
+            # Sans ce nettoyage, le ticket GitHub affiche des "\n" visibles au lieu d'un markdown
+            # correctement formaté.
+            ticket["body"] = ticket["body"].replace("\\n", "\n")
+        except Exception as e:
+            # Gemini indisponible/rate-limité : reporter la création du ticket au prochain cycle
+            # plutôt que de planter tout /api/agent/run-cycle (qui bloquerait aussi les autres
+            # clusters de la même boucle). Le claim est levé dans le except englobant ci-dessous
+            # (même chemin que tout autre échec après le claim), donc create_ticket retentera au
+            # cycle suivant plutôt que de rester bloqué sur "pending". Mesuré le 2026-08-28.
+            raise RuntimeError(f"Gemini indisponible : {e}") from e
+
+        repo = _repo_for_project(project_id)
+        token = os.environ["GITHUB_TOKEN"]
+
+        async with httpx.AsyncClient() as http:
+            resp = await http.post(
+                f"{GITHUB_API_URL}/repos/{repo}/issues",
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "Accept": "application/vnd.github+json",
+                },
+                json={"title": ticket["title"], "body": ticket["body"]},
+                timeout=15.0,
+            )
+            resp.raise_for_status()
+            issue = resp.json()
+
+        issue_url = issue["html_url"]
+        issue_number = issue["number"]
+
+        db.clusters.update_one(
+            {"_id": cluster["_id"]},
+            {"$set": {"issue_url": issue_url, "issue_number": issue_number}},
+        )
+
+        if team_language == "en":
+            message = (
+                f'New ticket created for cluster "{cluster["label"]}" '
+                f"({feedback_count} feedbacks, avg sentiment {avg_sentiment:.2f}): {issue_url}"
+            )
+        else:
+            message = (
+                f"Nouveau ticket créé pour le cluster « {cluster['label']} » "
+                f"({feedback_count} feedbacks, sentiment moyen {avg_sentiment:.2f}) : {issue_url}"
+            )
+
+        await notify(project_id=project_id, message=message, language=team_language)
+
+        return {"issue_url": issue_url, "issue_number": issue_number, "created": True}
+
     except Exception as e:
-        # Gemini indisponible/rate-limité : reporter la création du ticket au prochain cycle
-        # plutôt que de planter tout /api/agent/run-cycle (qui bloquerait aussi les autres
-        # clusters de la même boucle). Le cluster garde issue_url vide, donc rien n'est perdu :
-        # create_ticket retentera au cycle suivant. Mesuré le 2026-08-28.
-        logger.warning("Génération du ticket indisponible pour ce cluster (%s), reporté.", e)
-        return {"created": False, "skipped": True, "reason": f"Gemini indisponible : {e}"}
-
-    repo = _repo_for_project(project_id)
-    token = os.environ["GITHUB_TOKEN"]
-
-    async with httpx.AsyncClient() as http:
-        resp = await http.post(
-            f"{GITHUB_API_URL}/repos/{repo}/issues",
-            headers={
-                "Authorization": f"Bearer {token}",
-                "Accept": "application/vnd.github+json",
-            },
-            json={"title": ticket["title"], "body": ticket["body"]},
-            timeout=15.0,
-        )
-        resp.raise_for_status()
-        issue = resp.json()
-
-    issue_url = issue["html_url"]
-    issue_number = issue["number"]
-
-    db.clusters.update_one(
-        {"_id": cluster["_id"]},
-        {"$set": {"issue_url": issue_url, "issue_number": issue_number}},
-    )
-
-    if team_language == "en":
-        message = (
-            f'New ticket created for cluster "{cluster["label"]}" '
-            f"({feedback_count} feedbacks, avg sentiment {avg_sentiment:.2f}): {issue_url}"
-        )
-    else:
-        message = (
-            f"Nouveau ticket créé pour le cluster « {cluster['label']} » "
-            f"({feedback_count} feedbacks, sentiment moyen {avg_sentiment:.2f}) : {issue_url}"
-        )
-
-    await notify(project_id=project_id, message=message, language=team_language)
-
-    return {"issue_url": issue_url, "issue_number": issue_number, "created": True}
+        # Tout échec après le claim (Gemini, GitHub, réseau) doit lever la réservation
+        # "pending", sinon ce cluster resterait bloqué indéfiniment : la vérification
+        # d'idempotence au tout début de cette fonction le verrait comme "déjà ticketé" pour
+        # toujours, sans jamais avoir réellement créé de ticket.
+        db.clusters.update_one({"_id": cluster["_id"]}, {"$unset": {"issue_url": ""}})
+        logger.warning("Création du ticket reportée pour ce cluster (%s).", e)
+        return {"created": False, "skipped": True, "reason": str(e)}

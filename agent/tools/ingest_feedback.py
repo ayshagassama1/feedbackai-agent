@@ -19,7 +19,7 @@ from db import get_mongo_client, DEFAULT_TEAM_LANGUAGE
 from config import MODEL_NAME, EMBEDDING_MODEL, EMBEDDING_DIMENSIONS
 from gemma_client import gemma_generate, GemmaUnavailableError
 
-_client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
+_client = genai.Client()  # mode Vertex AI via GOOGLE_GENAI_USE_VERTEXAI/GOOGLE_CLOUD_PROJECT/GOOGLE_CLOUD_LOCATION (voir .env)
 logger = logging.getLogger(__name__)
 
 # Produit bilingue FR/EN (cf. team_language) : on restreint les langues candidates pour la

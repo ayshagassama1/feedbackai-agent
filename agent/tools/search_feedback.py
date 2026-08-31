@@ -10,7 +10,7 @@ from google.genai import types
 from db import get_mongo_client
 from config import EMBEDDING_MODEL, EMBEDDING_DIMENSIONS
 
-_client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
+_client = genai.Client()  # mode Vertex AI via GOOGLE_GENAI_USE_VERTEXAI/GOOGLE_CLOUD_PROJECT/GOOGLE_CLOUD_LOCATION (voir .env)
 
 # Nom de l'index Vector Search créé dans Atlas
 VECTOR_INDEX_NAME = "feedback_vector_index"

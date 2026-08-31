@@ -14,7 +14,7 @@ from google.genai import types
 from db import get_mongo_client, get_team_language
 from config import MODEL_NAME
 
-_client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
+_client = genai.Client()  # mode Vertex AI via GOOGLE_GENAI_USE_VERTEXAI/GOOGLE_CLOUD_PROJECT/GOOGLE_CLOUD_LOCATION (voir .env)
 logger = logging.getLogger(__name__)
 
 RECOMMENDATIONS_SCHEMA = {

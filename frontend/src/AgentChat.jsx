@@ -4,6 +4,62 @@ import { translations } from "./i18n";
 
 const API_URL = import.meta.env.VITE_API_URL ?? "";
 
+/* Rendu markdown minimal (titres #-####, listes -/*, gras **texte**) : le modèle répond en
+   markdown, mais le rendait jusqu'ici en texte brut, symboles littéraux compris. Pas de
+   dépendance externe pour un besoin aussi ciblé. */
+function renderMarkdown(text) {
+  const lines = text.split("\n");
+  const elements = [];
+  let listItems = null;
+
+  const flushList = () => {
+    if (listItems) {
+      elements.push(
+        <ul key={`ul-${elements.length}`} style={{ margin: "4px 0", paddingLeft: 18 }}>
+          {listItems.map((item, j) => <li key={j}>{item}</li>)}
+        </ul>
+      );
+      listItems = null;
+    }
+  };
+
+  const renderInline = (line) =>
+    line.split(/(\*\*[^*]+\*\*)/g).map((part, i) =>
+      part.startsWith("**") && part.endsWith("**")
+        ? <strong key={i}>{part.slice(2, -2)}</strong>
+        : <span key={i}>{part}</span>
+    );
+
+  lines.forEach((line, i) => {
+    const trimmed = line.trim();
+    if (!trimmed) { flushList(); return; }
+
+    const headerMatch = trimmed.match(/^#{1,4}\s+(.*)/);
+    if (headerMatch) {
+      flushList();
+      elements.push(
+        <div key={i} style={{ fontWeight: 700, marginTop: elements.length ? 10 : 0 }}>
+          {renderInline(headerMatch[1])}
+        </div>
+      );
+      return;
+    }
+
+    const bulletMatch = trimmed.match(/^[-*]\s+(.*)/);
+    if (bulletMatch) {
+      if (!listItems) listItems = [];
+      listItems.push(renderInline(bulletMatch[1]));
+      return;
+    }
+
+    flushList();
+    elements.push(<p key={i} style={{ margin: "4px 0" }}>{renderInline(trimmed)}</p>);
+  });
+  flushList();
+
+  return elements;
+}
+
 export default function AgentChat({ projectId, lang }) {
   const t = translations[lang];
   const [messages, setMessages] = useState([
@@ -61,7 +117,7 @@ export default function AgentChat({ projectId, lang }) {
         {messages.map((m, i) => (
           <div key={i} style={{ ...st.message, ...(m.role === "user" ? st.userMsg : st.assistantMsg) }}>
             <div style={{ ...st.bubble, ...(m.role === "user" ? st.userBubble : st.assistantBubble) }}>
-              {m.content}
+              {m.role === "assistant" ? renderMarkdown(m.content) : m.content}
             </div>
           </div>
         ))}

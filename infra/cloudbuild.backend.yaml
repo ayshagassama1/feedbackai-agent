@@ -11,6 +11,11 @@ steps:
       - push
       - gcr.io/$PROJECT_ID/feedback-agent:$BUILD_ID
 
+  # GOOGLE_GENAI_USE_VERTEXAI/GOOGLE_CLOUD_PROJECT/GOOGLE_CLOUD_LOCATION (fixes, pas des
+  # substitutions) : bascule tous les appels Gemini sur Vertex AI (facturé sur les crédits GCP)
+  # plutôt que l'API Gemini directe (palier gratuit plafonné dur à 20 requêtes/jour, mesuré le
+  # 2026-08-30 en plein tournage). gemini-3.5-flash n'est disponible que sur la location
+  # "global" pour ce projet (404 mesuré sur us-central1) — ne pas changer sans retester.
   - name: "gcr.io/google.com/cloudsdktool/cloud-sdk"
     entrypoint: gcloud
     args:
@@ -23,7 +28,7 @@ steps:
       - --allow-unauthenticated
       - --memory=1Gi
       - --cpu=1
-      - --set-env-vars=GCP_PROJECT_ID=$PROJECT_ID,MONGODB_DB=feedbackai,GEMMA_LOCATION=${_GEMMA_LOCATION},GEMMA_ENDPOINT_ID=${_GEMMA_ENDPOINT_ID},FRONTEND_ORIGINS=${_FRONTEND_ORIGIN},PUBSUB_PUSH_SERVICE_ACCOUNT=${_PUBSUB_PUSH_SERVICE_ACCOUNT},RUN_CYCLE_AUDIENCE=${_RUN_CYCLE_AUDIENCE}
+      - --set-env-vars=GCP_PROJECT_ID=$PROJECT_ID,MONGODB_DB=feedbackai,GEMMA_LOCATION=${_GEMMA_LOCATION},GEMMA_ENDPOINT_ID=${_GEMMA_ENDPOINT_ID},FRONTEND_ORIGINS=${_FRONTEND_ORIGIN},PUBSUB_PUSH_SERVICE_ACCOUNT=${_PUBSUB_PUSH_SERVICE_ACCOUNT},RUN_CYCLE_AUDIENCE=${_RUN_CYCLE_AUDIENCE},GOOGLE_GENAI_USE_VERTEXAI=True,GOOGLE_CLOUD_PROJECT=$PROJECT_ID,GOOGLE_CLOUD_LOCATION=global
       - --set-secrets=GEMINI_API_KEY=gemini-api-key:latest,MONGODB_URI=mongodb-uri:latest,GITHUB_TOKEN=github-token:latest,GITHUB_REPO_MAP=github-repo-map:latest,RUN_CYCLE_SECRET=run-cycle-secret:latest
 
 images:
