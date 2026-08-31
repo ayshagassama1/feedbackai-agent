@@ -14,6 +14,38 @@ clustering, and insight helpers), adapted here. Everything else, including the A
 orchestration, the action loop, background execution, the Gemma triage stage, and the frontend,
 was built during the Submission Period.
 
+## Features
+
+- **Multi-source ingestion**: free text, CSV upload, or a URL (App Store reviews via Apple's
+  RSS feed, or the extracted text of any other page).
+- **PII scrubbing**: emails and phone numbers are masked before any model call or storage, not
+  just before display.
+- **Bilingual, FR/EN, end to end**, not a UI translation layer bolted on top:
+  - Each feedback's language is detected deterministically (a language-ID library, not a model
+    guess), independent of anything else.
+  - Feedback in French and English about the same problem lands in the same cluster: grouping
+    is by embedding similarity, not keyword matching, so duplicate signal in two languages
+    becomes one.
+  - Team-facing output (cluster labels, insights recommendations, ticket titles and bodies,
+    notifications) is written in the team's configured language (`team_language`, FR or EN),
+    while direct quotes from the original feedback keep their source language, untranslated.
+  - The chat agent answers in whichever language you write to it in, regardless of
+    `team_language`.
+  - The frontend's own FR/EN toggle is tied to `team_language`: switching it changes the
+    language of both the interface and future AI-generated content, not just the UI chrome.
+- **Insights dashboard**: total and weekly feedback counts, average sentiment, top issues by
+  category, and three Gemini-generated actionable recommendations, refreshed on demand.
+- **Conversational agent**: ask questions about the feedback in natural language; the chat
+  agent uses the same tools (semantic search, insights, clustering) as the autonomous cycle,
+  including Atlas Vector Search for meaning-based lookup, not exact text match.
+- **Autonomous action**: for clusters that clear both a volume and a severity threshold, the
+  agent opens a real GitHub issue on its own and notifies the team, no human in the loop.
+  Idempotent and safe under concurrent or duplicate triggers (Pub/Sub redelivery, manual
+  re-runs): a cluster is only ever ticketed once, verified under a genuine race condition, not
+  just in theory.
+- **Scheduled autonomy**: the full cycle (cluster → insights → ticket → notify) also runs on
+  its own on a recurring schedule via Cloud Scheduler and Pub/Sub, not only on demand.
+
 ## Prerequisites
 
 | Tool | Version | Used for |
@@ -30,8 +62,8 @@ was built during the Submission Period.
 | Layer | Technology |
 |---|---|
 | Agent | Google ADK (`LlmAgent` + `Runner`) |
-| Reasoning, chat, summaries | `gemini-3.5-flash` (direct Gemini API, not Vertex: unavailable on Vertex for this project) |
-| Embeddings | `gemini-embedding-001`, 768 dims (direct Gemini API) |
+| Reasoning, chat, summaries | `gemini-3.5-flash` (Vertex AI, `global` location only: 404 on `us-central1`) |
+| Embeddings | `gemini-embedding-001`, 768 dims (Vertex AI) |
 | Per-item triage (ingestion) | Gemma (Vertex AI, Model Garden), Gemini fallback |
 | Backend | FastAPI |
 | Data | MongoDB Atlas + Atlas Vector Search |
@@ -50,10 +82,10 @@ graph TD
         Scheduler["Cloud Scheduler<br/>periodic cron"]
         PubSub["Pub/Sub<br/>feedback-cycle topic"]
         Gemma["Gemma<br/>Vertex AI · Model Garden"]
+        Gemini["Gemini 3.5 Flash<br/>Vertex AI · location global"]
     end
 
     subgraph External["External"]
-        Gemini["Gemini 3.5 Flash<br/>direct Gemini API"]
         Mongo[("MongoDB Atlas<br/>+ Vector Search")]
         GitHub["GitHub Issues"]
     end
@@ -78,9 +110,12 @@ the threshold. No human in the loop.
 
 - **Gemma** (Vertex AI, Model Garden): per-item triage at ingestion, language, category,
   sentiment, summary, in one call. A small dedicated model for high-volume, low-cost work.
-- **Gemini 3.5 Flash** (direct Gemini API): low-volume reasoning, cluster labels,
-  recommendations, the chat agent, and an **automatic fallback** for triage if the Gemma
-  endpoint isn't deployed or doesn't respond.
+- **Gemini 3.5 Flash** (Vertex AI): low-volume reasoning, cluster labels, recommendations, the
+  chat agent, and an **automatic fallback** for triage if the Gemma endpoint isn't deployed or
+  doesn't respond. Both models now run on Vertex AI, billed against Google Cloud credits
+  instead of the Gemini API's separate free tier (5 requests/minute, 20/day, too restrictive
+  under real use). `gemini-3.5-flash` is only available in the `global` location for this
+  project (still 404 on `us-central1`).
 
 ```
 text/CSV/URL feedback
@@ -98,8 +133,14 @@ text/CSV/URL feedback
   clustering, insights, chat agent (ADK) → Gemini 3.5 Flash
 ```
 
-**Feedback sources:** free text, CSV upload, or a URL. A URL is handled one of two ways
-(`agent/tools/fetch_url.py`):
+**Feedback sources:** free text, CSV upload, or a URL.
+
+CSV upload (`POST /api/ingest/csv`) reads one feedback per row, from a `text`, `feedback`, or
+`content` column (checked in that order, first one present wins). Every other column is
+ignored. Each row goes through the same pipeline as a single text submission: clean, scrub PII,
+triage, embed, store, in the background, one at a time.
+
+A URL is handled one of two ways (`agent/tools/fetch_url.py`):
 - An App Store app page: pulls the most recent reviews through Apple's public RSS feed (no
   scraping), one feedback per review.
 - Any other page: fetches it and extracts the main text, treated as a single feedback.
@@ -430,7 +471,8 @@ See `.env.example` for the full list. Summary:
 
 | Variable | Used for | Required? |
 |---|---|---|
-| `GEMINI_API_KEY` | Chat, reasoning, embeddings, triage fallback | Yes |
+| `GOOGLE_GENAI_USE_VERTEXAI` / `GOOGLE_CLOUD_PROJECT` / `GOOGLE_CLOUD_LOCATION` | Routes every Gemini call (chat, reasoning, embeddings, triage fallback) through Vertex AI | Yes. `GOOGLE_CLOUD_LOCATION` must be `global`: `gemini-3.5-flash` 404s on `us-central1` for this project |
+| `GEMINI_API_KEY` | Unused by any Gemini call today (all clients auto-detect Vertex from the three variables above) | No, kept as a fallback credential only |
 | `MONGODB_URI` / `MONGODB_DB` | Database | Yes |
 | `GCP_PROJECT_ID` | Resolving the Gemma endpoint | No, falls back to Gemini without it |
 | `GEMMA_ENDPOINT_ID` / `GEMMA_LOCATION` | Deployed Gemma endpoint | No, same fallback |
