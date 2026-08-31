@@ -46,6 +46,54 @@ was built during the Submission Period.
 - **Scheduled autonomy**: the full cycle (cluster → insights → ticket → notify) also runs on
   its own on a recurring schedule via Cloud Scheduler and Pub/Sub, not only on demand.
 
+## Testing Instructions 
+
+The fastest checks need no setup at all, just the hosted URLs and the repo:
+
+- Frontend: https://feedback-agent-frontend-353meapeuq-uc.a.run.app
+- Backend: https://feedback-agent-353meapeuq-uc.a.run.app (`/health` returns `{"status":"ok"}`)
+
+1. **The agent acting on its own, no interaction needed.** Open this repo's
+   [Issues tab](https://github.com/ayshagassama1/feedbackai-agent/issues). Every open issue
+   there was written and filed by the agent itself, triggered by its scheduled cycle, not by
+   hand: title and body in the team's configured language, direct feedback quotes kept in
+   their original language inside the same ticket.
+
+2. **Bilingual clustering.** Clusters tab on the frontend: open a cluster and check the
+   feedback list in the detail panel. Several existing clusters group French and English
+   feedback about the same underlying complaint in one group, by embedding similarity, not
+   keyword matching.
+
+3. **Ingestion, triage, and PII scrubbing, live.** New feedback tab: paste a short feedback
+   containing a fake email or phone number, submit. Then check
+   `GET {backend_url}/api/feedbacks?project_id=demo` (or reload the frontend after a few
+   seconds) to see it stored with language, category, and sentiment filled in, and the email
+   or phone number replaced with `[email masqué]` / `[téléphone masqué]`.
+
+4. **Create a new bilingual cluster yourself.** [`docs/sample-feedback.csv`](docs/sample-feedback.csv)
+   has 5 fictional feedbacks: two French/English pairs about the same app-freezing complaint
+   (verified to embed close enough to cluster together, cosine similarity ≥ 0.82 for every
+   pair but one, and that one is still close), plus one with a fake email to check the scrub
+   again. Upload it from the New feedback tab (CSV mode). It ingests and triages immediately;
+   grouping it into a visible cluster needs one autonomous cycle to run, which is not left on a
+   live schedule for this submission (each cycle spends real Gemini/Vertex quota, and I'm not
+   leaving it running unattended against hackathon credits). The clusters and tickets already
+   visible in this deployment (point 1 and 2 above) came from the same mechanism, already
+   demonstrated end to end; this file just lets you feed it new input yourself rather than only
+   look at what's already there.
+
+5. **The conversational agent.** Chat agent tab: ask something like "What are the most
+   reported bugs this week?" The answer comes from the same tools (semantic search over
+   Atlas Vector Search, clustering, insights) the autonomous cycle itself uses, not a
+   separate, simpler path.
+
+6. **Full reproduction from scratch**, including deploying to your own Google Cloud project:
+   see "MongoDB setup", "Deploying to Cloud Run", and "Scheduled trigger" below. These are the
+   exact steps used to build the deployment linked above, not a simplified version of them.
+
+All feedback and projects visible in this deployment (`project_id="demo"`) are fictional, made
+up to exercise the pipeline. No real user data.
+
 ## Prerequisites
 
 | Tool | Version | Used for |
@@ -62,7 +110,7 @@ was built during the Submission Period.
 | Layer | Technology |
 |---|---|
 | Agent | Google ADK (`LlmAgent` + `Runner`) |
-| Reasoning, chat, summaries | `gemini-3.5-flash` (Vertex AI, `global` location only: 404 on `us-central1`) |
+| Reasoning, chat, summaries | `gemini-3.5-flash` (Vertex AI, `global` location only) |
 | Embeddings | `gemini-embedding-001`, 768 dims (Vertex AI) |
 | Per-item triage (ingestion) | Gemma (Vertex AI, Model Garden), Gemini fallback |
 | Backend | FastAPI |
